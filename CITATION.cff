@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use or reference cockpit for Claude Code, please cite it as below."
+type: software
+title: "cockpit: status line, cost alert and rm -rf guard for Claude Code"
+abstract: "A Claude Code plugin that puts context usage and session cost in the status line, adds a budget alert and a /cockpit dashboard with rate limits and MCP server health, and blocks rm -rf and other recursive deletes in Dropbox, iCloud Drive, Google Drive and OneDrive folders."
+authors:
+  - given-names: Izzatullah
+    family-names: Mustafa
+    alias: izzatum
+license: MIT
+repository-code: "https://github.com/izzatum/claude-code-cockpit"
+url: "https://github.com/izzatum/claude-code-cockpit#readme"
+keywords:
+  - claude-code
+  - claude-code-plugin
+  - status-line
+  - context-window
+  - cost-tracking
+  - budget-alert
+  - mcp
+  - rm-rf
+  - cloud-sync

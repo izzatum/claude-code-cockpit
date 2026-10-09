@@ -24,8 +24,10 @@
     }
   },
   "author": {
-    "name": "Muhammad Izzatullah"
+    "name": "Izzatullah Mustafa",
+    "url": "https://github.com/izzatum"
   },
+  "homepage": "https://github.com/izzatum/claude-code-cockpit#readme",
   "license": "MIT",
   "repository": "https://github.com/izzatum/claude-code-cockpit",
   "keywords": [

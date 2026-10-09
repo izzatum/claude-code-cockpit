@@ -2,7 +2,7 @@
 
 > cockpit for Claude Code is a plugin that puts context usage and session cost in the status line, adds a budget alert and a `/cockpit` dashboard with rate limits and MCP server health, and blocks `rm -rf` and other recursive deletes in Dropbox, iCloud Drive, Google Drive and OneDrive folders. Free and open source (MIT). Version 0.3.0 (see plugin.json). Tested on Claude Code 2.1.295.
 
-A community plugin by izzatum, not affiliated with Anthropic, and not related to the Cockpit Linux web console. For developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. The GitHub repo izzatum/claude-code-cockpit is also its plugin marketplace.
+A community plugin by Izzatullah Mustafa (GitHub: izzatum), not affiliated with Anthropic, and not related to the Cockpit Linux web console. For developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. The GitHub repo izzatum/claude-code-cockpit is also its plugin marketplace.
 
 Install inside Claude Code: `/plugin install cockpit --marketplace izzatum/claude-code-cockpit`. From a shell: `claude plugin install cockpit --marketplace izzatum/claude-code-cockpit` (add `--config budget=10` to set an option), or `claude plugin marketplace add izzatum/claude-code-cockpit`, then `claude plugin install cockpit@claude-code-cockpit`.
 

@@ -2,7 +2,7 @@
 
 **cockpit for Claude Code** is a plugin that puts context usage and session cost in the status line, adds a budget alert and a `/cockpit` dashboard with rate limits and MCP server health, and blocks `rm -rf` and other recursive deletes in Dropbox, iCloud Drive, Google Drive and OneDrive folders.
 
-It is a community plugin by izzatum, not affiliated with Anthropic, and not related to the Cockpit Linux web console. It is for developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. The GitHub repo `izzatum/claude-code-cockpit` is also its plugin marketplace. Free and open source under the MIT license. Version 0.3.0 (the source of truth is [`plugin.json`](plugins/cockpit/.claude-plugin/plugin.json)). Tested on Claude Code 2.1.295.
+It is a community plugin by Izzatullah Mustafa ([@izzatum](https://github.com/izzatum) on GitHub), not affiliated with Anthropic, and not related to the Cockpit Linux web console. It is for developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. The GitHub repo `izzatum/claude-code-cockpit` is also its plugin marketplace. Free and open source under the MIT license. Version 0.3.0 (the source of truth is [`plugin.json`](plugins/cockpit/.claude-plugin/plugin.json)). Tested on Claude Code 2.1.295.
 
 <p align="center"><img src="assets/cockpit-hero.svg" alt="cockpit for Claude Code: Dash, a gauge-faced pilot bot, gives a thumbs-up beside gauges for context at 31%, cost of $0.84 against a $5.00 alert and the cloud-sync guard switched on, above the status line web-app · ctx 31% · $0.84 · caveman" width="800"></p>
 
@@ -318,4 +318,4 @@ That first load also writes the editor typings to `plugins/cockpit/.claude-plugi
 
 ## License
 
-[MIT](LICENSE). Copyright (c) 2026 Muhammad Izzatullah.
+[MIT](LICENSE). Copyright (c) 2026 [Izzatullah Mustafa](https://github.com/izzatum).
