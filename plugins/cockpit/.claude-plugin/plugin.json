@@ -1,0 +1,51 @@
+{
+  "name": "cockpit",
+  "version": "0.3.0",
+  "description": "Claude Code status line plugin: context %, session cost, budget alert, /cockpit dashboard with rate limits and MCP health, and an rm -rf guard for Dropbox, iCloud Drive, Google Drive and OneDrive folders.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "budget": {
+      "type": "number",
+      "title": "Cost alert (USD)",
+      "description": "Show one pop-up when the session's cost reaches this many US dollars (the dashboard's cost turns red too); 0 turns it off",
+      "default": 5
+    },
+    "compactTools": {
+      "type": "boolean",
+      "title": "Compact read-only tool rows",
+      "description": "Shrink the rows of finished Read calls (and Glob/Grep, on builds that have them) to one dim line",
+      "default": true
+    },
+    "projectTags": {
+      "type": "string",
+      "title": "Project tags",
+      "description": "Optional labels for projects, as needle=Label pairs split by ';' (e.g. acme=Acme Corp; client-x=Client X). A project whose full path contains a needle (any letter case) shows its label in the status line, pane and spinner",
+      "default": ""
+    }
+  },
+  "author": {
+    "name": "Muhammad Izzatullah"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/izzatum/claude-mods",
+  "keywords": [
+    "claude-code",
+    "statusline",
+    "status-line",
+    "context-window",
+    "token-usage",
+    "session-cost",
+    "cost-tracking",
+    "budget-alert",
+    "rate-limits",
+    "dashboard",
+    "mcp-health",
+    "rm-rf",
+    "cloud-sync",
+    "dropbox",
+    "icloud",
+    "google-drive",
+    "onedrive",
+    "safety-hook"
+  ]
+}

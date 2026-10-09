@@ -1,0 +1,37 @@
+{
+  "name": "claude-mods",
+  "owner": {
+    "name": "Muhammad Izzatullah"
+  },
+  "metadata": {
+    "description": "Claude Code plugins (mods) by izzatum: cockpit, a status line with context %, session cost, budget alert, MCP health and an rm -rf guard for cloud-synced folders."
+  },
+  "plugins": [
+    {
+      "name": "cockpit",
+      "source": "./plugins/cockpit",
+      "description": "Claude Code status line plugin: context %, session cost, budget alert, /cockpit dashboard with rate limits and MCP health, and an rm -rf guard for Dropbox, iCloud Drive, Google Drive and OneDrive folders.",
+      "category": "mod",
+      "keywords": [
+        "claude-code",
+        "statusline",
+        "status-line",
+        "context-window",
+        "token-usage",
+        "session-cost",
+        "cost-tracking",
+        "budget-alert",
+        "rate-limits",
+        "dashboard",
+        "mcp-health",
+        "rm-rf",
+        "cloud-sync",
+        "dropbox",
+        "icloud",
+        "google-drive",
+        "onedrive",
+        "safety-hook"
+      ]
+    }
+  ]
+}
