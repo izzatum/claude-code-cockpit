@@ -219,11 +219,19 @@ test('a long command does not stall the guard', () => {
     `echo "${'(x)'.repeat(8000)}"`,
     `node -e '${'(e=t.x,n=e.y,r=n(e)'.repeat(5000)}'`, // assignments that never end
     `echo '${'(git -c (git -c '.repeat(5000)}'`, // git options that never end
+    `echo "${'/'.repeat(50_000)}x"`, // a root folder's parent form over a run of slashes
+    `echo ${'\\'.repeat(50_000)}x`,
+    `yarn${' --x'.repeat(30)} y`, // yarn flags that could parse two ways
+    `sh -${'c'.repeat(50_000)}= <<EOF\nx\nEOF`, // a `sh -c` look-alike
+    `rm -rf ${'{a,b}'.repeat(40)}`, // brace lists that multiply
+    `rm -rf dist && ${'cd .. && '.repeat(3000)}ls`, // many commands that act
   ]
+  const guard = guardOf(['~/work', '/Volumes/NAS'])
   for (const command of long) {
     const t = Date.now()
     syncVerdict(command, '/home/me/code/app')
     syncVerdict(command, DIR)
+    syncVerdict(command, '/Users/me', guard) // a parent of ~/work: every check runs
     isRecursiveDelete(command)
     expect({ size: command.length, isQuick: Date.now() - t < 250 }).toEqual({ size: command.length, isQuick: true })
   }
@@ -464,12 +472,29 @@ test('guardPaths entries written with $HOME, a root, or Windows paths', () => {
   ])
 })
 
-test('the built-in synced folders through braces, redirects and relative names', () => {
+test('the built-in synced folders through braces, redirects and line continuations', () => {
+  const app = '/Users/me/code/app'
   check([
     ['rm -rf {/tmp/a,~/Dropbox}', '/tmp', 'deny'],
+    ['rm -rf ~/{Dropbox,x}', '/tmp', 'deny'],
     ['cd ~/Dropbox>/dev/null && rm -rf build', '/tmp', 'deny'],
     ['rm -rf Dropbox', '/Users/me', 'deny'],
+    ['find ~/Dropbox/clients \\\n  -mindepth 1 \\\n  -delete', '/tmp', 'deny'],
+    ['find . \\\n  -delete', '/Users/me/Dropbox/x', 'deny'],
+    ['# tidy \\\nrm -rf ~/Dropbox/x', '/tmp', 'deny'], // a comment's `\` joins nothing
+    ['cd ~/Dropbox/x # go \\\nrm -rf build', '/tmp', 'deny'],
+    // Product names in code and prose are not folders.
+    ["rm -rf dist && git commit -am 'Support `OneDrive` folders'", app, undefined],
+    ['git commit -m "Add Dropbox, Box and S3 storage backends" && npm run build', app, undefined],
+    ['rm -rf .cache && python3 -c "print(Dropbox)"', app, undefined],
+    ['rm -rf dist && npm test -- -t Dropbox,OneDrive', app, undefined],
+    ['rm -rf build && echo "(OneDrive)"', app, undefined],
+    ['grep -rn "new Dropbox(" src && rm -rf dist', app, undefined],
+    ["rm -rf tmp && sed -i '' 's/Dropbox(/DropboxClient(/' src/a.ts", app, undefined],
+    ['node -e "const d = new Dropbox({accessToken: t})" && npm run build', app, undefined],
   ])
+  expect(isRecursiveDelete('git -C ~/work clean \\\n  -fdx')).toBe(true)
+  expect(isRecursiveDelete('rm \\\n  -rf x')).toBe(true)
 })
 
 test('relative paths fold onto the cwd', () => {
@@ -477,4 +502,53 @@ test('relative paths fold onto the cwd', () => {
   expect(joinPath('/Users/me', './a/./b')).toBe('/Users/me/a/b')
   expect(joinPath('/', '../..')).toBe('/')
   expect(joinPath('C:\\Users\\me', '..\\x')).toBe('C:/Users/x')
+})
+
+test('settings folders: braces, spaced relative names, heredocs, ${HOME:?}, Git Bash entries', () => {
+  verdicts(guardOf(['~/work', '~/My Projects']), [
+    ['rm -rf ~/{work,old}', '/tmp', 'deny'],
+    ['rm -rf ~/work{,.bak}', '/tmp', 'deny'],
+    ['rm -rf /Users/me/{work,tmp}', '/tmp', 'deny'],
+    ['rm -rf ~/{a,{work,b}}', '/tmp', 'deny'],
+    ['rm -rf "../My Projects"', '/Users/me/other', 'deny'],
+    ['rm -rf ../My\\ Projects', '/Users/me/other', 'deny'],
+    ['cd "../My Projects" && rm -rf build', '/Users/me/other', 'deny'],
+    ["bash -c \"rm -rf '../My Projects'\"", '/Users/me/other', 'deny'],
+    ['bash -c "rm -rf ../work"', '/Users/me/other', 'deny'],
+    ['rm -rf "../My Projectsx"', '/Users/me/other', undefined],
+    ["xargs rm -rf <<'EOF'\n/Users/me/work\nEOF", '/tmp', 'deny'],
+    ["cat <<'EOF' | xargs rm -rf\n/Users/me/work\nEOF", '/tmp', 'deny'],
+    ['rm -rf "${HOME:?}/work"', '/tmp', 'deny'],
+    ['rm -rf "${HOME%/}/work"', '/tmp', 'deny'],
+    ['rm -rf "${HOME:?}"', '/tmp', 'deny'],
+    ['rm -rf "${HOMEDIR}/work"', '/tmp', undefined],
+    ['rm -rf "${HOME:?}/workshop"', '/tmp', undefined],
+    ['find ~/work \\\n  -mindepth 1 \\\n  -delete', '/tmp', 'deny'],
+    ['rsync -a \\\n  --delete empty/ ~/work/', '/tmp', 'deny'],
+    ['cd .. && rm -rf work', '/Users/me/code', 'deny'],
+    ['cd ~ && rm -rf work', '/tmp', 'deny'],
+    ['echo ~ | xargs rm -rf', '/tmp', 'deny'],
+    // A parent named where nothing deletes or moves is not reached.
+    ['rm -rf dist && git commit -m "CI / build fixes"', '/Users/me/code/app', undefined],
+    ['rm -rf out && echo $((10 / 2))', '/Users/me/code/app', undefined],
+    ['git clean -fdx && ls ~', '/Users/me/code/app', undefined],
+    ['rm -rf dist && echo $HOME', '/Users/me/code/app', undefined],
+    ['rm -rf build && mkdir build && cd build && cmake .. && make', '/Users/me/app', undefined],
+  ])
+  verdicts(guardOf(['$HOME/work']), [['rm -rf "${HOME:?}"/work', '/tmp', 'deny']])
+  const win = 'C:\\Users\\me'
+  for (const entry of ['/c/Users/me/work', 'C:\\Users\\me\\work']) {
+    verdicts(guardOf([entry], win), [
+      ['rm -rf build', 'C:\\Users\\me\\work', 'deny'],
+      ['rm -rf ~/work', '/tmp', 'deny'],
+      ['rm -rf ~', '/tmp', 'deny'],
+      ['rm -rf build', 'C:\\Users\\me\\code', undefined],
+    ])
+  }
+  verdicts(guardOf(['/c/work'], win), [['rm -rf build', 'C:\\work', 'deny']])
+  verdicts(guardOf([], win, ['~/Documents']), [
+    ['rm -rf dist && cmd //c "npm run build"', 'C:\\Users\\me\\code\\app', undefined],
+    ['rm -rf dist && cmd /c "npm run build"', 'C:\\Users\\me\\code\\app', undefined],
+    ['rm -rf C:\\', '/tmp', 'deny'],
+  ])
 })

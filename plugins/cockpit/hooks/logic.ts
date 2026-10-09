@@ -6,8 +6,13 @@ export type Verdict = { deny: string } | { warn: string } | undefined
 // Folders a sync client uploads as they change: Dropbox, iCloud Drive, Google Drive, OneDrive.
 // The bare names also match `Dropbox (Team)`, `OneDrive - Org`, shell-escaped spaces and
 // Windows backslashes. Case-sensitive on purpose: a `dropbox` SDK folder is not the sync root.
-const SYNCED =
-  /[\/\\]Library[\/\\](CloudStorage[\/\\](Dropbox|GoogleDrive|OneDrive)|Mobile\\? Documents)|(^|[\/\\\s"'=({,\x60])(Dropbox( \([^)\/\\]*\))?|OneDrive( - [^\/\\"']*)?|Google\\? Drive)(?=$|[\/\\\s"';&|)<>},\x60])/
+// A bare name counts after a slash (then up to a brace, comma, backtick or redirect too), or
+// as a whole word, so `new Dropbox(` or `-t Dropbox,OneDrive` in code or prose is not a folder.
+const SYNC_NAME = String.raw`(Dropbox( \([^)\/\\]*\))?|OneDrive( - [^\/\\"']*)?|Google\\? Drive)`
+const SYNCED = new RegExp(
+  String.raw`[\/\\]Library[\/\\](CloudStorage[\/\\](Dropbox|GoogleDrive|OneDrive)|Mobile\\? Documents)` +
+    String.raw`|[\/\\]${SYNC_NAME}(?=$|[\/\\\s"';&|)<>},\x60])|(^|[\s"'=])${SYNC_NAME}(?=$|[\/\\\s"';&|)<>])`,
+)
 
 // Where a command word starts: the line, after ; & | ( { ` $( or !, after a keyword or
 // wrapper (if, then, do, sudo, xargs, time, find -exec…), inside `sh -lc '…'` / `eval "…"`,
@@ -15,7 +20,7 @@ const SYNCED =
 // quoted in a commit message, grep pattern or echo is not a command. Every step is bounded
 // (10 words or options, 200 characters of a value or path part, the path stops at ( { !)
 // or splits one way only, so long code or data cannot stall the match.
-const CMD = String.raw`(?:^|[;&|\n({!\x60]|\$\(|-exec(?:dir)?\s|\b(?:if|elif|then|do|else|while|until|time|nohup|builtin|command|exec|eval)(?:\s+-\S+){0,10}\s|\b(?:sudo|doas|env|nice|timeout|xargs)(?:\s+[^\s;&|]+){0,10}?\s|\b(?:ba|z|da|k)?sh(?:\s+-[a-zA-Z]+){0,10}\s+-[a-zA-Z]*c[a-zA-Z]*(?:\s+--)?\s)\s*(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|"']{0,200})\s+){0,10}["']?\\?(?:[^\s;&|"'\x60(){}!/]{0,200}\/)*`
+const CMD = String.raw`(?:^|[;&|\n({!\x60]|\$\(|-exec(?:dir)?\s|\b(?:if|elif|then|do|else|while|until|time|nohup|builtin|command|exec|eval)(?:\s+-\S+){0,10}\s|\b(?:sudo|doas|env|nice|timeout|xargs)(?:\s+[^\s;&|]+){0,10}?\s|\b(?:ba|z|da|k)?sh(?:\s+-[a-zA-Z]+){0,10}\s+-(?=[a-zA-Z]*c)[a-zA-Z]+(?:\s+--)?\s)\s*(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|"']{0,200})\s+){0,10}["']?\\?(?:[^\s;&|"'\x60(){}!/]{0,200}\/)*`
 // Up to 10 of git's global options, those whose value stands apart (`-C dir`) too.
 const GIT_ARG = String.raw`(?:-c|--(?:git-dir|work-tree|namespace|exec-path|super-prefix|config-env))(?=\s)`
 const GIT = String.raw`git\s+(?:${GIT_ARG}\s+(?:"[^"]*"|'[^']*'|[^\s"']\S*)\s+|(?!${GIT_ARG})--?\w[\w-]*(?:=\S*)?\s+){0,10}`
@@ -32,12 +37,14 @@ const GIT_CLEAN = String.raw`clean\b(?![^;&|\n]*\s(?:-[a-z]*n|--dry-run\b))[^;&|
 const DELETE = new RegExp(`${CMD}(?:${RM}|${FIND}|${RSYNC})|${CMD}${GIT}(?:${RM}|${GIT_CLEAN})`, 'i')
 const HEAVY = new RegExp(
   CMD +
-    String.raw`(?:(?:npm|pnpm|yarn|bun)\s+(?:install|i|ci|add|(?:run(?:-script)?\s+)?build)\b|yarn(?:\s+--?[\w-]+)*\s*(?=$|[;&|\n)])|pip3?\s+install\b|cargo\s+build\b)`,
+    String.raw`(?:(?:npm|pnpm|yarn|bun)\s+(?:install|i|ci|add|(?:run(?:-script)?\s+)?build)\b|yarn(?:\s+-[\w-]+)*\s*(?=$|[;&|\n)])|pip3?\s+install\b|cargo\s+build\b)`,
 )
 // A heredoc opener (`<<EOF`, `<<-'EOF'`), not a here-string (`<<<`).
 const OPENER = /(?<!<)<<(?!<)-?[ \t]*(['"]?)(\w+)\1/g
 // A shell that reads the body: one standing as a command word, not a name such as `clean.sh`.
 const SHELL = new RegExp(CMD + String.raw`(?:(?:ba|z|da|k)?sh|eval|source)\b`, 'i')
+// A `cd` or `pushd` standing as a command.
+const CD = new RegExp(CMD + String.raw`(?:cd|pushd)(?=\s|$)`)
 
 const DENY =
   'cockpit: recursive delete inside a cloud-synced folder is blocked: the sync app would delete it on every device. Do not retry another way (find -delete, rsync, mv, a script). Tell the user what you wanted to delete and let them do it.'
@@ -46,10 +53,18 @@ const DENY_PROTECTED =
 export const GUARD_FAILED =
   'cockpit: the cloud-sync guard could not check this recursive delete, so it was not run. Tell the user what you wanted to delete and let them do it.'
 
+// Both readings of a `\` before a newline: it joins the lines (`find x \` then `-delete`),
+// except in a comment or after `\\`, where the newline still ends the command. Reading both
+// only ever adds matches.
+function code(command: string): string {
+  const joined = command.replace(/\\\r?\n/g, ' ')
+  return joined === command ? bodies(command) : `${bodies(command)}\n${bodies(joined)}`
+}
+
 // The command without heredoc bodies, which are data unless a shell reads them (`bash <<EOF`,
 // `<<EOF | sh`). One pass over the lines, so a long command cannot stall the guard; a body
 // that never closes stays in, as code.
-function code(command: string): string {
+function bodies(command: string): string {
   if (!command.includes('<<')) return command
   const kept: string[] = []
   let body: string[] = []
@@ -80,16 +95,63 @@ export type Guard = { synced?: RegExp; protected?: RegExp; above?: RegExp }
 
 // A word that may be a path relative to the cwd: `work`, `../work`, `./x` (not ~, / or $).
 const RELATIVE = /(?<![^\s=({,])[\w.][^\s;&|()<>{},\x60]*/g
+// One shell word, quoted parts and `\ ` escapes kept in: `"../My Projects"`, `../My\ Projects`.
+const WORD = /(?<![^\s=({,])(?=["'\\]?[\w.])(?:"[^"]*"|'[^']*'|\\.|[^\s;&|()<>{},\x60"'\\])+/g
+// Where one command of a list ends; a pipe stays in, so `echo .. | xargs rm -rf` is one.
+const LIST = /;|\n|&&|\|\|/
+
+// `~/{work,old}` -> `~/work ~/old`, as bash expands it: one innermost group at a time with the
+// whole word around it. 64 groups and 100k characters at most, so `{a,b}{a,b}…` cannot stall.
+const BRACE = /(?<!\S)(\S*?)\{([^{}\s]{0,200},[^{}\s]{0,200})\}(\S*)/
+function braces(text: string): string {
+  const cap = text.length + 100_000
+  for (let i = 0; i < 64 && text.length < cap; i++) {
+    const m = BRACE.exec(text)
+    if (!m) break
+    const [all, pre = '', list = '', post = ''] = m
+    text = text.slice(0, m.index) + list.split(',').map(x => pre + x + post).join(' ') + text.slice(m.index + all.length)
+  }
+  return text
+}
+
+// Shell text as paths read in it: space escapes and quotes gone (`"$HOME"/work`, `~/'work'`,
+// `My\ Projects`), brace lists expanded.
+const strip = (text: string) => braces(text.replace(/\\(?=\s)/g, '').replace(/["']/g, ''))
+
+// The commands of a list that delete or change folder, and the relative words in them joined
+// onto the cwd: `rm -rf ../work` or `cd .. && rm -rf work` reach ~/work from ~/code, while
+// `cmake ..` or `ls /` beside an `rm -rf dist` reach nothing. Both readings of a `\` newline.
+function reach(command: string, cwd: string): { acts: string[]; near: string[] } {
+  const joined = command.replace(/\\\r?\n/g, ' ')
+  const parts = new Set([...command.split(LIST), ...joined.split(LIST)])
+  const acts = [...parts].filter(part => {
+    const b = strip(part)
+    return DELETE.test(b) || CD.test(b)
+  })
+  // Whole words with a space in them, and one quote level down (`bash -c "rm -rf '../a b'"`).
+  const spaced = (text: string) => (text.match(WORD) ?? []).filter(w => /\s/.test(w))
+  const words = acts.flatMap(part => {
+    const outer = spaced(part)
+    const inner = outer.flatMap(w => Array.from(w.matchAll(/"([^"]*)"|'([^']*)'/g), m => spaced(m[1] ?? m[2] ?? '')).flat())
+    return [...(strip(part).match(RELATIVE) ?? []), ...[...outer, ...inner].map(w => w.replace(/\\(?=\s)/g, '').replace(/["']/g, ''))]
+  })
+  return { acts: acts.map(strip), near: words.map(word => joinPath(cwd, word)) }
+}
 
 export function syncVerdict(command: string, cwd: string, guard: Guard = {}): Verdict {
   const run = code(command)
-  // Quotes and space escapes gone, so `"$HOME"/work`, `~/'work'` and `My\ Projects` read as paths.
-  const bare = run.replace(/\\(?=\s)/g, '').replace(/["']/g, '')
-  // Relative words on the cwd, so `rm -rf work` from ~ or `rm -rf ../work` names ~/work.
-  const near = (bare.match(RELATIVE) ?? []).map(word => joinPath(cwd, word))
-  const names = (re?: RegExp) => !!re && (re.test(cwd) || re.test(bare) || near.some(p => re.test(p)))
-  const isSynced = names(SYNCED) || names(guard.synced)
-  if (!isSynced && !names(guard.protected) && !names(guard.above)) return undefined
+  // Heredoc bodies stay in for paths: `xargs rm -rf <<EOF` takes its folders from one.
+  const bare = strip(command)
+  let isSynced = SYNCED.test(cwd) || SYNCED.test(bare)
+  let isGuarded = isSynced
+  // Settings' folders also by relative name and through their parents, in the commands that act.
+  if (guard.synced || guard.protected || guard.above) {
+    const { acts, near } = reach(command, cwd)
+    const names = (re: RegExp | undefined, texts: string[]) => !!re && (re.test(cwd) || texts.some(t => re.test(t)) || near.some(p => re.test(p)))
+    isSynced ||= names(guard.synced, [bare])
+    isGuarded = isSynced || names(guard.protected, [bare]) || names(guard.above, acts)
+  }
+  if (!isGuarded) return undefined
   if (DELETE.test(run)) return { deny: isSynced ? DENY : DENY_PROTECTED }
   if (isSynced && HEAVY.test(run)) {
     return { warn: 'cockpit: cloud-synced folder: installs and builds here upload node_modules and build output. A local, unsynced clone avoids it.' }
@@ -123,7 +185,9 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const START = String.raw`(?:^|[\s"'=(:{,\x60])`
 const SEP = String.raw`[\/\\]+`
 const END = String.raw`(?=$|[\/\\\s"';&|)<>},\x60])`
-const WORD_END = String.raw`[\/\\]*(?=$|[\s"';&|)<>},\x60])`
+const STOP = String.raw`(?=$|[\s"';&|)<>},\x60])`
+// `$HOME`, `${HOME}` and its expansions such as `${HOME:?}` or `${HOME%/}`.
+const HOME_VAR = String.raw`\$HOME|\$\{HOME(?:[^\w}][^}]*)?\}`
 
 // The folders above a path, to its root: "/a/b/c" -> "/a/b", "/a", "/"; "~/a" -> "~".
 function above(path: string): string[] {
@@ -145,28 +209,32 @@ function matchers(home?: string) {
   const h = home?.replace(/[\\/]+$/, '') || undefined
   const drive = (p: string) => (/^[A-Za-z]:/.test(p) ? `(?:${escape(p)}|/${p[0]}${escape(p.slice(2))})` : escape(p))
   const lower = (p: string) => p.replace(/\\/g, '/').toLowerCase()
-  const homeAlt = String.raw`(?:~|\$HOME|\$\{HOME\}${h ? `|${drive(h)}` : ''})`
+  const homeAlt = String.raw`(?:~|${HOME_VAR}${h ? `|${drive(h)}` : ''})`
   // "~/x", "$HOME/x" or "<home>/x" -> "/x"; undefined for a folder outside home.
   const restOf = (path: string): string | undefined => {
-    const lead = /^(?:~|\$HOME|\$\{HOME\})(?=[\\/]|$)/.exec(path)?.[0]
+    const lead = new RegExp(String.raw`^(?:~|${HOME_VAR})(?=[\\/]|$)`).exec(path)?.[0]
     if (lead !== undefined) return path.slice(lead.length)
     const isUnder = h && lower(path).startsWith(lower(h)) && /^([\\/]|$)/.test(path.slice(h.length))
     return isUnder ? path.slice(h.length) : undefined
   }
   const form = (path: string) => {
     const rest = restOf(path)
-    return (rest === undefined ? drive(path) : homeAlt + escape(rest)).replace(/\\\\|\//g, SEP)
+    return (rest === undefined ? drive(path) : homeAlt + escape(rest)).replace(/(?:\\\\|\/)+/g, SEP)
   }
+  // A Git Bash entry ("/c/Users/x") also as "c:/Users/x", so it meets Windows cwds and home.
+  const withDrive = (paths: string[]) => paths.flatMap(p => (/^\/[A-Za-z](?=[\\/]|$)/.test(p) ? [p, `${p[1]}:${p.slice(2)}`] : [p]))
   const compile = (forms: string[]) => (forms.length ? new RegExp(`${START}(?:${forms.join('|')})`, 'i') : undefined)
   return {
     // A root (`/`) covers everything below it, so it needs no end.
-    folders: (paths: string[]) => compile(paths.map(form).map(f => (f === SEP ? f : f + END))),
+    folders: (paths: string[]) => compile(withDrive(paths).map(form).map(f => (f === SEP ? f : f + END))),
     parents: (paths: string[]) => {
-      const ups = paths.flatMap(path => {
+      const ups = withDrive(paths).flatMap(path => {
         const rest = restOf(path)
         return rest === undefined ? above(path) : [...above(`~${rest}`), ...(h ? above(h) : [])]
       })
-      return compile([...new Set(ups)].map(p => form(p) + WORD_END))
+      // A drive (`C:`) only as written: its Git Bash form `/c` reads as cmd's `/c` switch.
+      const parent = (p: string) => (/^[A-Za-z]:$/.test(p) ? escape(p) : form(p))
+      return compile([...new Set(ups)].map(parent).map(f => (f === SEP ? f : f + String.raw`[\/\\]*`) + STOP))
     },
   }
 }
