@@ -6,6 +6,8 @@ import {
   contextCrossed,
   duration,
   folderMatcher,
+  joinPath,
+  parentMatcher,
   parsePaths,
   rateCrossed,
   resetText,
@@ -343,6 +345,7 @@ test('protected and extra synced folders, as written or through the home folder'
   expect(syncVerdict('rm -rf dist', 'C:\\Users\\me\\Documents\\app', synced)).toHaveProperty('deny', expect.stringContaining('cloud-synced'))
   expect(syncVerdict('npm ci', '~/Desktop/app', synced)).toHaveProperty('warn')
   expect(folderMatcher([], home)).toBeUndefined()
+  expect(parentMatcher(['relative'], home)).toBeUndefined()
   expect(folderMatcher(['a.b(c)'], home)?.test('/x a.b(c)/y')).toBe(true)
   expect(folderMatcher(['a.b(c)'], home)?.test('/x aXb(c)/y')).toBe(false)
 })
@@ -364,7 +367,18 @@ test('rate alert fires once per window', () => {
   const next = { ...a, resetsAt: 'T3' }
   expect(rateCrossed([next], 90, ['five_hour:T1'])).toEqual({ fired: [next], alerted: ['five_hour:T3'] })
   expect(rateCrossed([a], 0, [])).toEqual({ fired: [], alerted: [] })
-  expect(rateCrossed([], 90, ['five_hour:T1'])).toEqual({ fired: [], alerted: [] })
+  // A reading that leaves the window out keeps its key.
+  expect(rateCrossed([], 90, ['five_hour:T1'])).toEqual({ fired: [], alerted: ['five_hour:T1'] })
+  // With no reset time, falling back under the line re-arms it.
+  const spend = (percentUsed: number) => ({ kind: 'spend_limit', percentUsed })
+  let alerted: string[] = []
+  let fires = 0
+  for (const pct of [95, 97, 3, 96]) {
+    const r = rateCrossed([spend(pct)], 90, alerted)
+    fires += r.fired.length
+    alerted = r.alerted
+  }
+  expect(fires).toBe(2)
 })
 
 test('durations, reset times and burn rate', () => {
@@ -384,4 +398,83 @@ test('durations, reset times and burn rate', () => {
   expect(burnText(2, 0, 4 * 60_000, 5)).toBeUndefined()
   expect(burnText(0, 0, hour, 5)).toBeUndefined()
   expect(burnText(2, undefined, hour, 5)).toBeUndefined()
+})
+
+// The guard a register would build for these settings.
+const guardOf = (protect: string[], home = '/Users/me', synced: string[] = []) => ({
+  synced: folderMatcher(synced, home),
+  protected: folderMatcher(protect, home),
+  above: parentMatcher([...synced, ...protect], home),
+})
+const verdicts = (guard: ReturnType<typeof guardOf>, rows: [string, string, Kind][]) => {
+  for (const [command, cwd, want] of rows) {
+    const v = syncVerdict(command, cwd, guard)
+    expect({ command, cwd, kind: v === undefined ? undefined : 'deny' in v ? 'deny' : 'warn' }).toEqual({ command, cwd, kind: want })
+  }
+}
+
+test('protected folders through quotes, escaped spaces, relative names and parents', () => {
+  verdicts(guardOf(['~/work', '~/My Projects']), [
+    ['rm -rf "$HOME"/work', '/tmp', 'deny'],
+    ['rm -rf "${HOME}"/work/old', '/tmp', 'deny'],
+    ["rm -rf ~/'work'", '/tmp', 'deny'],
+    ['rm -rf "/Users/me"/work', '/tmp', 'deny'],
+    ['rm -rf ~/My\\ Projects/old', '/tmp', 'deny'],
+    ['rm -rf ~/My\\ Projectsx/old', '/tmp', undefined],
+    ['rm -rf work', '/Users/me', 'deny'],
+    ['rm -rf ../work', '/Users/me/code', 'deny'],
+    ['rm -rf ../workshop', '/Users/me/code', undefined],
+    ['rm -rf ..', '/Users/me/code', 'deny'],
+    ['rm -rf ~', '/tmp', 'deny'],
+    ['rm -rf ~/', '/tmp', 'deny'],
+    ['rm -rf "$HOME"', '/tmp', 'deny'],
+    ['rm -rf /Users/me', '/tmp', 'deny'],
+    ['rm -rf /Users', '/tmp', 'deny'],
+    ['rm -rf build', '/Users/me', 'deny'], // the cwd is a parent of ~/work
+    ['rm -rf build', '/Users/me/code', undefined],
+    ['rm -rf ~/code/x', '/tmp', undefined],
+    ['rm -rf {/tmp/x,~/work}', '/tmp', 'deny'],
+    ['rm -rf `echo ~/work`', '/tmp', 'deny'],
+    ['ls ~ && npm install', '/tmp', undefined],
+  ])
+  verdicts(guardOf(['/Volumes/NAS/projects']), [
+    ['rm -rf /Volumes/NAS', '/tmp', 'deny'],
+    ['rm -rf projects', '/Volumes/NAS', 'deny'],
+    ['rm -rf other', '/Volumes/NAS/x', undefined],
+    ['rm -rf /Volumes/NASTY', '/tmp', undefined],
+  ])
+})
+
+test('guardPaths entries written with $HOME, a root, or Windows paths', () => {
+  verdicts(guardOf(['$HOME/work']), [['rm -rf build', '/Users/me/work/app', 'deny']])
+  verdicts(guardOf(['${HOME}/work']), [['rm -rf ~/work', '/tmp', 'deny']])
+  verdicts(guardOf(['/users/ME/Work']), [['rm -rf ~/work', '/tmp', 'deny']])
+  verdicts(guardOf(['/']), [
+    ['rm -rf /tmp/x', '/tmp', 'deny'],
+    ['rm -rf build', '/Users/me/app', 'deny'],
+  ])
+  const win = 'C:\\Users\\me'
+  verdicts(guardOf([], win, ['~/Documents']), [
+    ['rm -rf C:\\\\Users\\\\me\\\\Documents\\\\app', '/tmp', 'deny'],
+    ['rm -rf /c/Users/me/Documents/app', '/tmp', 'deny'],
+    ['rm -rf dist', 'C:\\Users\\me\\Documents\\app', 'deny'],
+    ['npm ci', 'C:\\Users\\me\\Documents\\app', 'warn'],
+    ['npm ci', 'C:\\Users\\me', undefined], // a parent of a synced folder is not itself synced
+    ['rm -rf dist', 'C:\\Users\\me\\code', undefined],
+  ])
+})
+
+test('the built-in synced folders through braces, redirects and relative names', () => {
+  check([
+    ['rm -rf {/tmp/a,~/Dropbox}', '/tmp', 'deny'],
+    ['cd ~/Dropbox>/dev/null && rm -rf build', '/tmp', 'deny'],
+    ['rm -rf Dropbox', '/Users/me', 'deny'],
+  ])
+})
+
+test('relative paths fold onto the cwd', () => {
+  expect(joinPath('/Users/me/code', '../work')).toBe('/Users/me/work')
+  expect(joinPath('/Users/me', './a/./b')).toBe('/Users/me/a/b')
+  expect(joinPath('/', '../..')).toBe('/')
+  expect(joinPath('C:\\Users\\me', '..\\x')).toBe('C:/Users/x')
 })

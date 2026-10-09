@@ -38,6 +38,7 @@ export type Snapshot = {
 
 declare module 'claude-code' {
   interface PluginState {
-    cockpit: { snap: Snapshot }
+    // `tick` counts minutes while the pane shows, so its countdowns redraw.
+    cockpit: { snap: Snapshot; tick: number }
   }
 }

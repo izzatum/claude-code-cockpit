@@ -23,10 +23,10 @@ It is a community plugin by Izzatullah Mustafa ([@izzatum](https://github.com/iz
  │     + if (!token) return redirect('/login')            │                                    │
  │                                                        │ Cost                               │
  │ ✻ web-app · Sauteing…                 ◀─ spinner tag   │ $0.84 of $5.00 alert               │
- │                                                        │ $1.12/h · alert in ~3h40m          │
+ │                                                        │ $1.12/h · alert in ~3h43m          │
  │                                                        │                                    │
  │                                                        │ Rate limits                        │
- │                                                        │ five_hour   ███░░░░░░░ 28% · 2h05m │
+ │                                                        │ five_hour   ██░░░░░░ 28% · 2h05m   │
  │                                                        │                                    │
  │                                                        │ Modes                              │
  │                                                        │ caveman                            │
@@ -95,7 +95,7 @@ This adds the marketplace if needed, then installs cockpit. To set an option at 
 | **Dashboard** | `/cockpit` pane | Context bar with token count, cost against your budget with the burn rate per hour, rate limits with reset times, active modes, MCP server health and how many commands the guard blocked. See [Use the dashboard](#use-the-dashboard). |
 | **Budget alert** | Pop-up | One pop-up when the session's cost reaches your budget (default $5), and the dashboard's cost turns red. See [Settings](#settings). |
 | **Context alert** | Pop-up | One pop-up when the context window reaches your line (default 80%), suggesting `/compact`; it re-arms once context drops back under. |
-| **Rate-limit alert** | Pop-up | One pop-up per rate-limit window, such as the 5-hour limit, when it reaches your line (default 90% used), with the time it resets. |
+| **Rate-limit alert** | Pop-up | One pop-up per rate-limit window, such as the 5-hour limit, when it reaches your line (default 90% used), with the time it resets. `/clear` does not repeat it for the same window. |
 | **Cloud-sync guard** | Every Bash and Monitor command Claude runs | Blocks recursive deletes (`rm -rf`, `find -delete`, `rsync --delete`, `git clean -f` and more) in Dropbox, iCloud Drive, Google Drive and OneDrive folders, and in folders you list in `guardPaths`, and warns before installs and builds in synced folders. See [how the guard decides](#rm--rf-guard-for-dropbox-icloud-drive-google-drive-and-onedrive). |
 | **MCP server health** | Dashboard, plus one pop-up | Counts MCP servers that are connected, need sign-in, or failed. One pop-up if the session's first check finds a failed server. |
 | **Compact tool rows** | Conversation | A finished Read call (and Glob or Grep search, on Claude Code builds that have those tools) shrinks to one dim line. |
@@ -104,12 +104,12 @@ This adds the marketplace if needed, then installs cockpit. To set an option at 
 ## Use the dashboard
 
 - **Open or close it:** type `/cockpit`; type it again to close it. It works while Claude is busy too.
-- **Size:** the pane needs about 21 rows, plus a few more when rate limits show. If it cannot be drawn, cockpit replies `Cockpit is open but not drawn` with the reason; make the window taller.
+- **Size:** the pane needs about 25 rows. If it cannot be drawn, cockpit replies `Cockpit is open but not drawn` with the reason; make the window taller.
 - **Best layout (terminal):** run `/tui fullscreen`. In a wide window the dashboard docks on the right as a sidebar; in a narrower one it opens above the prompt. cockpit also runs in the desktop app's Code tab.
 
 The context bar turns yellow at 60% and red at 80%, with the token count underneath, such as `62k / 200k tokens`.
 
-Under the cost, after the first 5 minutes, the dashboard shows the session's burn rate, such as `$1.12/h`, and while you are under your budget, about how long until you reach it: `alert in ~3h40m`. Each rate limit shows the time left until it resets, such as `2h05m`.
+Under the cost, after the first 5 minutes, the dashboard shows the session's burn rate, such as `$1.12/h`, and while you are under your budget, about how long until you reach it: `alert in ~3h43m`. Each rate limit shows the time left until it resets, such as `2h05m`.
 
 **Modes** shows the caveman and ponytail plugins while they are on, with a level such as `caveman:ultra` or `ponytail:full`, and `mem` while the claude-mem plugin is enabled. These are separate plugins; cockpit only reports them. The status line joins modes with `+` (for example `caveman+ponytail:full`) and leaves them out when none are on; the dashboard says `none`.
 
@@ -127,7 +127,7 @@ Open them with:
 | --- | --- | --- |
 | `budget` | `5` | Cost alert in US dollars. One pop-up when the session's cost reaches it, and the dashboard's cost turns red. It fires once per session and budget value; `/clear` or a new value arms it again. `0` turns it off, and a blank value means `5`. |
 | `contextAlert` | `80` | Context alert, in percent of the context window. One pop-up when context reaches it; it re-arms when a `/compact` or `/clear` brings context back under. `0` turns it off. |
-| `rateAlert` | `90` | Rate-limit alert, in percent used. One pop-up per rate-limit window when it reaches it, with the reset time. `0` turns it off. |
+| `rateAlert` | `90` | Rate-limit alert, in percent used. One pop-up per rate-limit window when it reaches it, with the reset time; `/clear` does not repeat it for the same window. A limit reported with no reset time alerts again only after it drops back under the line. `0` turns it off. |
 | `guardPaths` | empty | Extra folders the guard protects, split by `;`, such as `~/work; /Volumes/NAS`. See [Your own protected folders](#your-own-protected-folders). |
 | `desktopSync` | `false` | Treat `~/Desktop` and `~/Documents` as synced folders. Turn it on if iCloud Drive's "Desktop & Documents Folders" (or OneDrive folder backup) syncs them. |
 | `compactTools` | `true` | Shrink finished Read rows (and Glob or Grep, where available) to one dim line. `false` keeps Claude Code's normal rows. |
@@ -196,13 +196,17 @@ To block recursive deletes in other folders too, such as a work folder, a networ
 ~/work; /Volumes/NAS
 ```
 
-The guard then treats these folders like synced ones: a recursive delete is blocked while Claude works inside one or when a command names one. Installs and builds there go ahead without a warning, since nothing uploads them. A path is matched as you write it, with `~`, `$HOME` or the full home path for your home folder, either slash and any letter case, and only whole folder names: `~/work` covers `~/work/app` but not `~/workshop`.
+The guard then treats these folders like synced ones: a recursive delete is blocked while Claude works inside one or when a command names one. Installs and builds there go ahead without a warning, since nothing uploads them.
+
+- **How a folder is recognised:** with `~`, `$HOME`, `${HOME}` or the full home path for your home folder (in the setting and in commands), either slash, any letter case, quoted or not (`"$HOME"/work`), with shell-escaped spaces (`My\ Projects`), and Windows paths also as Git Bash writes them (`/c/Users/you`). Only whole folder names count: `~/work` covers `~/work/app` but not `~/workshop`.
+- **Relative names count:** `rm -rf work` run from your home folder, or `rm -rf ../work` from a sibling folder, names `~/work` and is blocked.
+- **So do the folders above it:** deleting a parent, such as `rm -rf ~` or `rm -rf /Volumes`, would delete the protected folder too, so it is blocked. While Claude works in a parent of a protected folder (for example your home folder, with `~/work` protected), every recursive delete there is blocked, since `rm -rf *` could reach it. This also applies to `~/Desktop` and `~/Documents` with `desktopSync` on.
 
 **If the guard itself fails**, it fails closed: any recursive delete is refused, judged on the command text alone in any folder, and other commands go ahead.
 
 ## Limits and caveats
 
-- **The guard is a safety net, not a sandbox.** It reads the command's text. It misses a synced folder reached through a symlink, a glob or a variable, a lowercase path, an alias, and deletes done by a script (Python, Node) or by `mv` out of the folder. macOS iCloud "Desktop & Documents" sync (`~/Desktop`, `~/Documents`) cannot be told from the path, so it is covered only when you turn on `desktopSync`. Now and then it blocks a harmless command whose quoted text reads like a delete after a `;` or a word such as `if` or `then`.
+- **The guard is a safety net, not a sandbox.** It reads the command's text. It misses a synced folder reached through a symlink, a glob or a variable other than `$HOME`, the parent of a built-in synced folder (such as `~/Library/CloudStorage`; add it to `guardPaths` if that matters), a lowercase path, an alias, and deletes done by a script (Python, Node) or by `mv` out of the folder. macOS iCloud "Desktop & Documents" sync (`~/Desktop`, `~/Documents`) cannot be told from the path, so it is covered only when you turn on `desktopSync`. Now and then it blocks a harmless command whose quoted text reads like a delete after a `;` or a word such as `if` or `then`.
 - **While Claude works inside a synced folder,** every recursive delete is blocked, even one aimed somewhere else such as `/tmp`. The same goes for a command that names a synced path anywhere.
 - **Cost is Claude Code's own session cost estimate**, shown as-is. It is not a bill. If you are on a subscription plan and don't want the alert, set `budget` to `0`.
 - **The burn rate is the session's average** since it started. For a resumed session, Claude Code counts from its first launch, so time away lowers the rate and stretches the "alert in" estimate.
@@ -310,7 +314,7 @@ It is as exact as Claude Code's own context and token usage figures, which cockp
 | Problem | Fix |
 | --- | --- |
 | No status line | Run `/reload-plugins`, or restart Claude Code. |
-| Dashboard is cut off or "not drawn" | Make the window taller; the pane needs about 21 rows. See [Use the dashboard](#use-the-dashboard). |
+| Dashboard is cut off or "not drawn" | Make the window taller; the pane needs about 25 rows. See [Use the dashboard](#use-the-dashboard). |
 | MCP servers says "unavailable" | Run `claude mcp list` in a terminal to see why. The check needs the `claude` command on PATH. |
 | A delete says the guard "could not check" it | The guard failed and refused the delete to be safe. Run the delete yourself, or start `claude --debug` and look for `cockpit:` lines. `/plugin disable cockpit@claude-code-cockpit` turns cockpit off until it is fixed. |
 | A harmless command was blocked | The guard reads text, so quoted words after `;`, `if` or `then` can look like a delete. Run that command yourself. |

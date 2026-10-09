@@ -160,6 +160,28 @@ test('the dashboard shows reset times and the burn rate', async ($, on) => {
   }
 })
 
+test('a rate-limit window alerts once, across /clear too', async ($, on) => {
+  const { seen, usage, measure } = world(on)
+  usage.rateLimits = [{ kind: 'five_hour', percentUsed: 92, resetsAt: new Date(1_000_000 + 3_600_000).toISOString() }]
+  await $.session.measure(measure)
+  usage.startedAt = 2 // /clear, same account window
+  await $.session.measure(measure)
+  expect(seen.toasts.filter(t => t.includes('rate limit')).length).toBe(1)
+})
+
+test('countdowns in the open pane move each minute with no other write', async ($, on) => {
+  const { usage, measure, clock } = world(on)
+  mcpList(on)
+  on('ui.panes', () => ({ value: [{ id: 'cockpit', isShown: true, isPlaced: true }] }) as never)
+  usage.rateLimits = [{ kind: 'five_hour', percentUsed: 28, resetsAt: new Date(1_000_000 + 2 * 3_600_000).toISOString() }]
+  await $.session.start(START)
+  await $.session.measure(measure)
+  const pane = await $.ui.mount({ plugin: 'cockpit', surface: 'terminal', component: 'Pane', requestId: 'cockpit', props: { ...PANE_PROPS, bodyColumns: 40 } })
+  expect(await pane.find({ text: /2h00m/ })).toBeDefined()
+  await clock.advance(60_000)
+  expect(await pane.find({ text: /1h59m/ })).toBeDefined()
+})
+
 // Counts `claude mcp list` runs; each finds one failed server.
 function mcpList(on: On): { runs: number } {
   const count = { runs: 0 }

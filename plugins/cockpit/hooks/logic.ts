@@ -7,7 +7,7 @@ export type Verdict = { deny: string } | { warn: string } | undefined
 // The bare names also match `Dropbox (Team)`, `OneDrive - Org`, shell-escaped spaces and
 // Windows backslashes. Case-sensitive on purpose: a `dropbox` SDK folder is not the sync root.
 const SYNCED =
-  /[\/\\]Library[\/\\](CloudStorage[\/\\](Dropbox|GoogleDrive|OneDrive)|Mobile\\? Documents)|(^|[\/\\\s"'=])(Dropbox( \([^)\/\\]*\))?|OneDrive( - [^\/\\"']*)?|Google\\? Drive)(?=$|[\/\\\s"';&|)])/
+  /[\/\\]Library[\/\\](CloudStorage[\/\\](Dropbox|GoogleDrive|OneDrive)|Mobile\\? Documents)|(^|[\/\\\s"'=({,\x60])(Dropbox( \([^)\/\\]*\))?|OneDrive( - [^\/\\"']*)?|Google\\? Drive)(?=$|[\/\\\s"';&|)<>},\x60])/
 
 // Where a command word starts: the line, after ; & | ( { ` $( or !, after a keyword or
 // wrapper (if, then, do, sudo, xargs, time, find -exec…), inside `sh -lc '…'` / `eval "…"`,
@@ -42,7 +42,7 @@ const SHELL = new RegExp(CMD + String.raw`(?:(?:ba|z|da|k)?sh|eval|source)\b`, '
 const DENY =
   'cockpit: recursive delete inside a cloud-synced folder is blocked: the sync app would delete it on every device. Do not retry another way (find -delete, rsync, mv, a script). Tell the user what you wanted to delete and let them do it.'
 const DENY_PROTECTED =
-  'cockpit: recursive delete inside a folder the user protected (cockpit guardPaths) is blocked. Do not retry another way (find -delete, rsync, mv, a script). Tell the user what you wanted to delete and let them do it.'
+  'cockpit: recursive delete in or above a folder the user protected (cockpit guardPaths or desktopSync) is blocked. Do not retry another way (find -delete, rsync, mv, a script). Tell the user what you wanted to delete and let them do it.'
 export const GUARD_FAILED =
   'cockpit: the cloud-sync guard could not check this recursive delete, so it was not run. Tell the user what you wanted to delete and let them do it.'
 
@@ -74,19 +74,38 @@ function code(command: string): string {
 export const isRecursiveDelete = (command: string): boolean => DELETE.test(code(command))
 
 // Folders from settings, as matchers: `synced` count as the sync apps' own (deletes blocked,
-// installs warned), `protected` only block recursive deletes.
-export type Guard = { synced?: RegExp; protected?: RegExp }
+// installs warned), `protected` only block recursive deletes, and `above` (the folders over
+// either) block them too, since deleting a parent deletes the folder.
+export type Guard = { synced?: RegExp; protected?: RegExp; above?: RegExp }
+
+// A word that may be a path relative to the cwd: `work`, `../work`, `./x` (not ~, / or $).
+const RELATIVE = /(?<![^\s=({,])[\w.][^\s;&|()<>{},\x60]*/g
 
 export function syncVerdict(command: string, cwd: string, guard: Guard = {}): Verdict {
   const run = code(command)
-  const names = (re?: RegExp) => !!re && (re.test(cwd) || re.test(run))
-  const isSynced = SYNCED.test(cwd) || SYNCED.test(run) || names(guard.synced)
-  if (!isSynced && !names(guard.protected)) return undefined
+  // Quotes and space escapes gone, so `"$HOME"/work`, `~/'work'` and `My\ Projects` read as paths.
+  const bare = run.replace(/\\(?=\s)/g, '').replace(/["']/g, '')
+  // Relative words on the cwd, so `rm -rf work` from ~ or `rm -rf ../work` names ~/work.
+  const near = (bare.match(RELATIVE) ?? []).map(word => joinPath(cwd, word))
+  const names = (re?: RegExp) => !!re && (re.test(cwd) || re.test(bare) || near.some(p => re.test(p)))
+  const isSynced = names(SYNCED) || names(guard.synced)
+  if (!isSynced && !names(guard.protected) && !names(guard.above)) return undefined
   if (DELETE.test(run)) return { deny: isSynced ? DENY : DENY_PROTECTED }
   if (isSynced && HEAVY.test(run)) {
     return { warn: 'cockpit: cloud-synced folder: installs and builds here upload node_modules and build output. A local, unsynced clone avoids it.' }
   }
   return undefined
+}
+
+// cwd + "../work" -> the folder it names, `.` and `..` folded (no Node here for path.resolve).
+export function joinPath(cwd: string, word: string): string {
+  const parts: string[] = []
+  for (const part of `${cwd}/${word}`.split(/[\\/]+/)) {
+    if (part === '..') {
+      if (parts.length > 1) parts.pop()
+    } else if (part !== '.') parts.push(part)
+  }
+  return parts.join('/') || '/'
 }
 
 // "~/work; /Volumes/NAS" -> ["~/work", "/Volumes/NAS"]; trailing slashes dropped, blanks skipped.
@@ -99,21 +118,61 @@ export function parsePaths(spec: string | undefined): string[] {
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-// A matcher for these folders as a cwd or a command names them: the path as written, with `~`,
-// `$HOME` or `${HOME}` for the home folder, either slash, any letter case, ending at a path
-// boundary (so ~/work does not match ~/workshop). Undefined when there is nothing to match.
-export function folderMatcher(paths: string[], home?: string): RegExp | undefined {
-  const h = home?.replace(/[\\/]+$/, '')
-  const forms = paths.flatMap(path => {
-    const rest = path === '~' || /^~[\\/]/.test(path) ? path.slice(1) : h && tildify(path, h) !== path ? path.slice(h.length) : undefined
-    if (rest === undefined) return [escape(path)]
-    const tail = escape(rest)
-    return [String.raw`(?:~|\$HOME|\$\{HOME\}${h ? `|${escape(h)}` : ''})${tail}`]
-  })
-  if (!forms.length) return undefined
-  const slashed = forms.map(f => f.replace(/\\\\|\//g, String.raw`[\/\\]`))
-  return new RegExp(String.raw`(?:^|[\s"'=(:])(?:${slashed.join('|')})(?=$|[\/\\\s"';&|)])`, 'i')
+// Where a path starts and ends in shell text: `~/work/x` and `~/work` end the folder `~/work`,
+// `~` alone (nothing below it) ends a parent.
+const START = String.raw`(?:^|[\s"'=(:{,\x60])`
+const SEP = String.raw`[\/\\]+`
+const END = String.raw`(?=$|[\/\\\s"';&|)<>},\x60])`
+const WORD_END = String.raw`[\/\\]*(?=$|[\s"';&|)<>},\x60])`
+
+// The folders above a path, to its root: "/a/b/c" -> "/a/b", "/a", "/"; "~/a" -> "~".
+function above(path: string): string[] {
+  const out: string[] = []
+  let cur = path.replace(/[\\/]+$/, '')
+  for (let i = Math.max(cur.lastIndexOf('/'), cur.lastIndexOf('\\')); i >= 0; i = Math.max(cur.lastIndexOf('/'), cur.lastIndexOf('\\'))) {
+    cur = cur.slice(0, i)
+    out.push(cur || '/')
+    if (!cur) break
+  }
+  return out
 }
+
+// Builds the matchers for folders from settings. A folder under the home folder matches as
+// `~`, `$HOME`, `${HOME}` or the home path (any letter case), Windows paths also as Git Bash
+// writes them (/c/Users), with either slash, doubled or not, and only as a whole folder name:
+// `~/work` matches `~/work/app`, not `~/workshop`.
+function matchers(home?: string) {
+  const h = home?.replace(/[\\/]+$/, '') || undefined
+  const drive = (p: string) => (/^[A-Za-z]:/.test(p) ? `(?:${escape(p)}|/${p[0]}${escape(p.slice(2))})` : escape(p))
+  const lower = (p: string) => p.replace(/\\/g, '/').toLowerCase()
+  const homeAlt = String.raw`(?:~|\$HOME|\$\{HOME\}${h ? `|${drive(h)}` : ''})`
+  // "~/x", "$HOME/x" or "<home>/x" -> "/x"; undefined for a folder outside home.
+  const restOf = (path: string): string | undefined => {
+    const lead = /^(?:~|\$HOME|\$\{HOME\})(?=[\\/]|$)/.exec(path)?.[0]
+    if (lead !== undefined) return path.slice(lead.length)
+    const isUnder = h && lower(path).startsWith(lower(h)) && /^([\\/]|$)/.test(path.slice(h.length))
+    return isUnder ? path.slice(h.length) : undefined
+  }
+  const form = (path: string) => {
+    const rest = restOf(path)
+    return (rest === undefined ? drive(path) : homeAlt + escape(rest)).replace(/\\\\|\//g, SEP)
+  }
+  const compile = (forms: string[]) => (forms.length ? new RegExp(`${START}(?:${forms.join('|')})`, 'i') : undefined)
+  return {
+    // A root (`/`) covers everything below it, so it needs no end.
+    folders: (paths: string[]) => compile(paths.map(form).map(f => (f === SEP ? f : f + END))),
+    parents: (paths: string[]) => {
+      const ups = paths.flatMap(path => {
+        const rest = restOf(path)
+        return rest === undefined ? above(path) : [...above(`~${rest}`), ...(h ? above(h) : [])]
+      })
+      return compile([...new Set(ups)].map(p => form(p) + WORD_END))
+    },
+  }
+}
+
+export const folderMatcher = (paths: string[], home?: string): RegExp | undefined => matchers(home).folders(paths)
+export const parentMatcher = (paths: string[], home?: string): RegExp | undefined => matchers(home).parents(paths)
 
 export type Tag = [needle: string, label: string]
 
@@ -191,10 +250,16 @@ export function contextCrossed(pct: number | undefined, threshold: number, wasOv
 
 // Once per rate-limit window: the key is the window's kind and reset time.
 export function rateCrossed(limits: RateLimit[], threshold: number, alerted: string[]): { fired: RateLimit[]; alerted: string[] } {
-  const keys = limits.map(l => `${l.kind}:${l.resetsAt ?? ''}`)
-  const fired = threshold > 0 ? limits.filter((l, i) => l.percentUsed >= threshold && !alerted.includes(keys[i] ?? '')) : []
-  // Only the windows still reported, so the list stays as short as the limits.
-  return { fired, alerted: keys.filter((k, i) => alerted.includes(k) || fired.includes(limits[i] as RateLimit)) }
+  const keyOf = (l: RateLimit) => `${l.kind}:${l.resetsAt ?? ''}`
+  const fired = threshold > 0 ? limits.filter(l => l.percentUsed >= threshold && !alerted.includes(keyOf(l))) : []
+  // A key stays until its kind reports another window, or, with no reset time to tell windows
+  // apart, until usage falls back under the line. A reading that leaves a window out keeps it,
+  // so each kind holds one key at most.
+  const kept = alerted.filter(k => {
+    const now = limits.find(l => k.startsWith(`${l.kind}:`))
+    return !now || (keyOf(now) === k && (now.resetsAt !== undefined || now.percentUsed >= threshold))
+  })
+  return { fired, alerted: [...kept, ...fired.map(keyOf)] }
 }
 
 // 5 min -> "5m", 125 min -> "2h05m", 3 days 4 h -> "3d4h"; rounded up to the minute.
