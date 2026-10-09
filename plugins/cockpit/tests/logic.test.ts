@@ -2,12 +2,19 @@ import { expect, test } from 'claude-code/testing'
 import {
   bar,
   budgetCrossed,
-  budgetOf,
+  burnText,
+  contextCrossed,
+  duration,
+  folderMatcher,
+  parsePaths,
+  rateCrossed,
+  resetText,
   compactLabel,
   isEnabled,
   isRecursiveDelete,
   modesOf,
   money,
+  numberOf,
   parseMcpList,
   parseTags,
   projectOf,
@@ -210,11 +217,20 @@ test('a long command does not stall the guard', () => {
     `echo "${'(x)'.repeat(8000)}"`,
     `node -e '${'(e=t.x,n=e.y,r=n(e)'.repeat(5000)}'`, // assignments that never end
     `echo '${'(git -c (git -c '.repeat(5000)}'`, // git options that never end
+    `echo "${'/'.repeat(50_000)}x"`, // a root folder's parent form over a run of slashes
+    `echo ${'\\'.repeat(50_000)}x`,
+    `yarn${' --x'.repeat(30)} y`, // yarn flags that could parse two ways
+    `sh -${'c'.repeat(50_000)}= <<EOF\nx\nEOF`, // a `sh -c` look-alike
+    `rm -rf ${'{a,b}'.repeat(40)}`, // brace lists that multiply
+    `rm -rf dist && ${'cd .. && '.repeat(3000)}ls`, // many commands
+    `echo "${'${HOME:'.repeat(16_000)}"`, // home expansions that never close
   ]
+  const guard = guardOf(['~/work', '/Volumes/NAS'])
   for (const command of long) {
     const t = Date.now()
     syncVerdict(command, '/home/me/code/app')
     syncVerdict(command, DIR)
+    syncVerdict(command, '/Users/me/work', guard) // inside ~/work: every check runs
     isRecursiveDelete(command)
     expect({ size: command.length, isQuick: Date.now() - t < 250 }).toEqual({ size: command.length, isQuick: true })
   }
@@ -264,10 +280,10 @@ test('status line', () => {
 })
 
 test('budget alert fires once per session and budget', () => {
-  expect(budgetOf('')).toBe(5)
-  expect(budgetOf(undefined)).toBe(5)
-  expect(budgetOf(0)).toBe(0)
-  expect(budgetOf(7)).toBe(7)
+  expect(numberOf('', 5)).toBe(5)
+  expect(numberOf(undefined, 80)).toBe(80)
+  expect(numberOf(0, 5)).toBe(0)
+  expect(numberOf(7, 5)).toBe(7)
   expect(budgetCrossed(5, 5, undefined, '1:5')).toBe(true)
   expect(budgetCrossed(5.2, 5, '1:5', '1:5')).toBe(false)
   expect(budgetCrossed(4.9, 5, undefined, '1:5')).toBe(false)
@@ -308,4 +324,215 @@ test('compact rows for read-only tools, with where a search ran', () => {
   expect(compactLabel('LS', { path: '/x' })).toBeUndefined()
   expect(compactLabel('Grep', {})).toBeUndefined()
   expect(compactLabel('Read', 'nope')).toBeUndefined()
+})
+
+test('protected and extra synced folders, as written or through the home folder', () => {
+  const home = '/Users/me'
+  const guard = { protected: folderMatcher(parsePaths(' ~/work/ ; /Volumes/NAS;; '), home) }
+  const rows: [string, string, Kind][] = [
+    ['rm -rf dist', '/Users/me/work', 'deny'],
+    ['rm -rf dist', '/Users/me/work/app', 'deny'],
+    ['rm -rf dist', '/Users/me/workshop', undefined],
+    ['rm -rf dist', '/Users/me/code', undefined],
+    ['rm -rf ~/work/old', '/tmp', 'deny'],
+    ['rm -rf $HOME/work/old', '/tmp', 'deny'],
+    ['rm -rf "${HOME}/work"', '/tmp', 'deny'],
+    ['rm -rf /users/ME/Work/old', '/tmp', 'deny'],
+    ['rm -rf /Volumes/NAS', '/tmp', 'deny'],
+    ['rm -rf /Volumes/NASTY', '/tmp', undefined],
+    ['npm install', '/Users/me/work/app', undefined],
+    ['ls ~/work', '/tmp', undefined],
+  ]
+  for (const [command, cwd, want] of rows) {
+    const v = syncVerdict(command, cwd, guard)
+    expect({ command, cwd, kind: v === undefined ? undefined : 'deny' in v ? 'deny' : 'warn' }).toEqual({ command, cwd, kind: want })
+  }
+  expect(syncVerdict('rm -rf dist', '/Users/me/work', guard)).toHaveProperty('deny', expect.stringContaining('guardPaths'))
+  const synced = { synced: folderMatcher(['~/Desktop', '~/Documents'], 'C:\\Users\\me') }
+  expect(syncVerdict('rm -rf dist', 'C:\\Users\\me\\Documents\\app', synced)).toHaveProperty('deny', expect.stringContaining('cloud-synced'))
+  expect(syncVerdict('npm ci', '~/Desktop/app', synced)).toHaveProperty('warn')
+  expect(folderMatcher([], home)).toBeUndefined()
+  expect(folderMatcher(['a.b(c)'], home)?.text.test('/x a.b(c)/y')).toBe(true)
+  expect(folderMatcher(['a.b(c)'], home)?.text.test('/x aXb(c)/y')).toBe(false)
+})
+
+test('context alert crosses upward, re-arms below the line', () => {
+  expect(contextCrossed(79, 80, false)).toEqual({ isOver: false, shouldAlert: false })
+  expect(contextCrossed(80, 80, false)).toEqual({ isOver: true, shouldAlert: true })
+  expect(contextCrossed(90, 80, true)).toEqual({ isOver: true, shouldAlert: false })
+  expect(contextCrossed(undefined, 80, true)).toEqual({ isOver: true, shouldAlert: false })
+  expect(contextCrossed(20, 80, true)).toEqual({ isOver: false, shouldAlert: false })
+  expect(contextCrossed(100, 0, false)).toEqual({ isOver: false, shouldAlert: false })
+})
+
+test('rate alert fires once per window', () => {
+  const a = { kind: 'five_hour', percentUsed: 91, resetsAt: 'T1' }
+  const b = { kind: 'seven_day', percentUsed: 50, resetsAt: 'T2' }
+  expect(rateCrossed([a, b], 90, [])).toEqual({ fired: [a], alerted: ['five_hour:T1'] })
+  expect(rateCrossed([a, b], 90, ['five_hour:T1'])).toEqual({ fired: [], alerted: ['five_hour:T1'] })
+  const next = { ...a, resetsAt: 'T3' }
+  expect(rateCrossed([next], 90, ['five_hour:T1'])).toEqual({ fired: [next], alerted: ['five_hour:T3'] })
+  expect(rateCrossed([a], 0, [])).toEqual({ fired: [], alerted: [] })
+  // A reading that leaves the window out keeps its key.
+  expect(rateCrossed([], 90, ['five_hour:T1'])).toEqual({ fired: [], alerted: ['five_hour:T1'] })
+  // With no reset time, falling back under the line re-arms it.
+  const spend = (percentUsed: number) => ({ kind: 'spend_limit', percentUsed })
+  let alerted: string[] = []
+  let fires = 0
+  for (const pct of [95, 97, 3, 96]) {
+    const r = rateCrossed([spend(pct)], 90, alerted)
+    fires += r.fired.length
+    alerted = r.alerted
+  }
+  expect(fires).toBe(2)
+})
+
+test('durations, reset times and burn rate', () => {
+  expect(duration(1)).toBe('1m')
+  expect(duration(5 * 60_000)).toBe('5m')
+  expect(duration(125 * 60_000)).toBe('2h05m')
+  expect(duration((3 * 24 + 4) * 3_600_000)).toBe('3d4h')
+  const now = Date.parse('2026-01-01T00:00:00Z')
+  expect(resetText('2026-01-01T02:05:00Z', now)).toBe('resets in 2h05m')
+  expect(resetText('2025-12-31T23:00:00Z', now)).toBe('resets now')
+  expect(resetText(undefined, now)).toBeUndefined()
+  expect(resetText('soon', now)).toBeUndefined()
+  const hour = 3_600_000
+  expect(burnText(2, 0, hour, 5)).toBe('$2.00/h · alert in ~1h30m')
+  expect(burnText(6, 0, hour, 5)).toBe('$6.00/h')
+  expect(burnText(2, 0, hour, 0)).toBe('$2.00/h')
+  expect(burnText(2, 0, 4 * 60_000, 5)).toBeUndefined()
+  expect(burnText(0, 0, hour, 5)).toBeUndefined()
+  expect(burnText(2, undefined, hour, 5)).toBeUndefined()
+})
+
+// The guard a register would build for these settings.
+const guardOf = (protect: string[], home = '/Users/me', synced: string[] = []) => ({
+  synced: folderMatcher(synced, home),
+  protected: folderMatcher(protect, home),
+})
+const verdicts = (guard: ReturnType<typeof guardOf>, rows: [string, string, Kind][]) => {
+  for (const [command, cwd, want] of rows) {
+    const v = syncVerdict(command, cwd, guard)
+    expect({ command, cwd, kind: v === undefined ? undefined : 'deny' in v ? 'deny' : 'warn' }).toEqual({ command, cwd, kind: want })
+  }
+}
+
+test('protected folders through quotes, escaped spaces and $HOME forms', () => {
+  verdicts(guardOf(['~/work', '~/My Projects']), [
+    ['rm -rf "$HOME"/work', '/tmp', 'deny'],
+    ['rm -rf "${HOME}"/work/old', '/tmp', 'deny'],
+    ['rm -rf "${HOME:?}/work"', '/tmp', 'deny'],
+    ['rm -rf "${HOME%/}/work"', '/tmp', 'deny'],
+    ['rm -rf "${HOMEDIR}/work"', '/tmp', undefined],
+    ['rm -rf "${HOME:?}/workshop"', '/tmp', undefined],
+    ["rm -rf ~/'work'", '/tmp', 'deny'],
+    ['rm -rf "/Users/me"/work', '/tmp', 'deny'],
+    ['rm -rf ~/My\\ Projects/old', '/tmp', 'deny'],
+    ['rm -rf ~/My\\ Projectsx/old', '/tmp', undefined],
+    ['rm -rf {/tmp/x,~/work}', '/tmp', 'deny'],
+    ['rm -rf `echo ~/work`', '/tmp', 'deny'],
+    ['find ~/work \\\n  -mindepth 1 \\\n  -delete', '/tmp', 'deny'],
+    ['rsync -a \\\n  --delete empty/ ~/work/', '/tmp', 'deny'],
+    ['rm -rf build', '/Users/me/code', undefined],
+    ['ls ~ && npm install', '/tmp', undefined],
+    // Names only, like the sync apps' folders (documented limits).
+    ['rm -rf work', '/Users/me', undefined],
+    ['rm -rf ~', '/tmp', undefined],
+    ['rm -rf ~/{work,old}', '/tmp', undefined],
+  ])
+  verdicts(guardOf(['/Volumes/NAS/projects']), [
+    ['rm -rf /Volumes/NAS/projects/x', '/tmp', 'deny'],
+    ['rm -rf other', '/Volumes/NAS/projects/x', 'deny'],
+    ['rm -rf /Volumes/NAS/projectsx', '/tmp', undefined],
+  ])
+})
+
+test('guardPaths entries written with $HOME, a root, or Windows paths', () => {
+  verdicts(guardOf(['$HOME/work']), [['rm -rf build', '/Users/me/work/app', 'deny']])
+  verdicts(guardOf(['${HOME}/work']), [['rm -rf ~/work', '/tmp', 'deny']])
+  verdicts(guardOf(['/users/ME/Work']), [['rm -rf ~/work', '/tmp', 'deny']])
+  verdicts(guardOf(['/']), [
+    ['rm -rf /tmp/x', '/tmp', 'deny'],
+    ['rm -rf build', '/Users/me/app', 'deny'],
+  ])
+  const win = 'C:\\Users\\me'
+  verdicts(guardOf([], win, ['~/Documents']), [
+    ['rm -rf C:\\\\Users\\\\me\\\\Documents\\\\app', '/tmp', 'deny'],
+    ['rm -rf /c/Users/me/Documents/app', '/tmp', 'deny'],
+    ['rm -rf dist', 'C:\\Users\\me\\Documents\\app', 'deny'],
+    ['npm ci', 'C:\\Users\\me\\Documents\\app', 'warn'],
+    ['npm ci', 'C:\\Users\\me', undefined],
+    ['rm -rf dist', 'C:\\Users\\me\\code', undefined],
+    ['rm -rf dist && cmd //c "npm run build"', 'C:\\Users\\me\\code\\app', undefined],
+    ['rm -rf dist && cmd /c "npm run build"', 'C:\\Users\\me\\code\\app', undefined],
+  ])
+  for (const entry of ['/c/Users/me/work', 'C:\\Users\\me\\work']) {
+    verdicts(guardOf([entry], win), [
+      ['rm -rf build', 'C:\\Users\\me\\work', 'deny'],
+      ['rm -rf ~/work', '/tmp', 'deny'],
+      ['rm -rf build', 'C:\\Users\\me\\code', undefined],
+    ])
+  }
+})
+
+test('the built-in synced folders through redirects and line continuations, not prose', () => {
+  const app = '/Users/me/code/app'
+  check([
+    ['rm -rf {/tmp/a,~/Dropbox}', '/tmp', 'deny'],
+    ['cd ~/Dropbox>/dev/null && rm -rf build', '/tmp', 'deny'],
+    ['rm -rf Dropbox', '/Users/me', 'deny'],
+    ['rm -rf ~/{Dropbox,"Google Drive"}/proj/node_modules', '/tmp', 'deny'],
+    ['cd ~ && rm -rf {"Google Drive",Dropbox}/tmp', '/tmp', 'deny'],
+    ['dirs=("Dropbox/cache"); rm -rf "${dirs[@]}"', '/Users/me', 'deny'],
+    ["rm -rf $'Dropbox (Team)'/x", '/Users/me', 'deny'],
+    ['find ~/Dropbox/clients \\\n  -mindepth 1 \\\n  -delete', '/tmp', 'deny'],
+    ['find . \\\n  -delete', '/Users/me/Dropbox/x', 'deny'],
+    ['# tidy \\\nrm -rf ~/Dropbox/x', '/tmp', 'deny'], // a comment's `\` joins nothing
+    ['cd ~/Dropbox/x # go \\\nrm -rf build', '/tmp', 'deny'],
+    ['rm build.log # remove the log \\\nls -R', DIR, undefined],
+    ["cat > Dockerfile <<'EOF'\nFROM node:20\nRUN apt-get update && \\\n    rm -rf /var/lib/apt/lists/* \\\nEOF", DIR, undefined],
+    // Product names in code, prose and heredoc data are not folders.
+    ["rm -rf dist && git commit -am 'Support `OneDrive` folders'", app, undefined],
+    ['git commit -m "Add Dropbox, Box and S3 storage backends" && npm run build', app, undefined],
+    ['rm -rf .cache && python3 -c "print(Dropbox)"', app, undefined],
+    ['rm -rf dist && npm test -- -t Dropbox,OneDrive', app, undefined],
+    ['rm -rf build && echo "(OneDrive)"', app, undefined],
+    ['grep -rn "new Dropbox(" src && rm -rf dist', app, undefined],
+    ["rm -rf tmp && sed -i '' 's/Dropbox(/DropboxClient(/' src/a.ts", app, undefined],
+    ['node -e "const d = new Dropbox({accessToken: t})" && npm run build', app, undefined],
+    ["git rm -r src/storage/dropbox && git commit -F - <<'EOF'\nRemove the Dropbox integration\nEOF", app, undefined],
+    ["rm -rf build && cat > .env <<'EOF'\nBACKUP_DIR=/Users/me/Dropbox/backups\nEOF", app, undefined],
+    ["cat > README.md <<'EOF'\nExport to ~/Dropbox/exports\nEOF\nnpm run build", app, undefined],
+    ['git clean -fd -e "tmp #1" -n \\\n  -q', DIR, undefined], // a quoted ` #` is no comment
+    ['echo "a #b" && find ~/Dropbox/x \\\n  -delete', '/tmp', 'deny'],
+    ['rm -f $(ls -tr logs/*.log | head -n -5)', DIR, undefined],
+    ['rm -f \\\n  $(ls -tr logs/*.log | head -n -5)', DIR, undefined],
+    ['rm -f /tmp/app.pid \\\n  `ls -tr *.log | head -1`', DIR, undefined],
+    ["find . -name '*.orig' \\\n  -exec rm -f {} + \\\n  -print", DIR, undefined],
+    ['rm $(cat list) -r', DIR, 'deny'],
+    ['rm `ls` \\\n  -rf', DIR, 'deny'],
+    ['rm $(dirname $(pwd)) -r', DIR, 'deny'],
+    ['rm -f $((n+1)) -r', DIR, 'deny'],
+    [`echo "${'\n'.repeat(50_000)}"\nrm -rf ~/Dropbox/x`, '/tmp', 'deny'],
+  ])
+  expect(isRecursiveDelete('git -C ~/work clean \\\n  -fdx')).toBe(true)
+  expect(isRecursiveDelete('rm \\\n  -rf x')).toBe(true)
+})
+
+test('guardPaths: escaped spaces in the setting, apostrophes, and neighbouring folders', () => {
+  expect(parsePaths('~/My\\ Projects; C:\\Users\\me\\work')).toEqual(['~/My Projects', 'C:\\Users\\me\\work'])
+  verdicts(guardOf(parsePaths('~/My\\ Projects')), [
+    ['rm -rf build', '/Users/me/My Projects/app', 'deny'],
+    ['rm -rf ~/My\\ Projects/x', '/tmp', 'deny'],
+    ['rm -rf build', '/Users/me/My Projectsx', undefined],
+  ])
+  verdicts(guardOf(["~/Tom's Files"]), [
+    ['rm -rf "$HOME/Tom\'s Files/x"', '/tmp', 'deny'],
+    ["rm -rf ~/Tom\\'s\\ Files/x", '/tmp', 'deny'],
+  ])
+  verdicts(guardOf(['~/work']), [
+    ['rm -rf build', '/Users/me/work (old)/app', undefined],
+    ['rm -rf build', '/Users/me/work, copy', undefined],
+  ])
 })

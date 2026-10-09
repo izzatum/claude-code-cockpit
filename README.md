@@ -1,8 +1,10 @@
 # cockpit: status line, cost alert and rm -rf guard for Claude Code
 
-**cockpit for Claude Code** is a plugin that puts context usage and session cost in the status line, adds a budget alert and a `/cockpit` dashboard with rate limits and MCP server health, and blocks `rm -rf` and other recursive deletes in Dropbox, iCloud Drive, Google Drive and OneDrive folders.
+[![CI](https://github.com/izzatum/claude-code-cockpit/actions/workflows/ci.yml/badge.svg)](https://github.com/izzatum/claude-code-cockpit/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/izzatum/claude-code-cockpit)](https://github.com/izzatum/claude-code-cockpit/releases) [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-It is a community plugin by Izzatullah Mustafa ([@izzatum](https://github.com/izzatum) on GitHub), not affiliated with Anthropic, and not related to the Cockpit Linux web console. It is for developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. The GitHub repo `izzatum/claude-code-cockpit` is also its plugin marketplace. Free and open source under the MIT license. Version 0.3.0 (the source of truth is [`plugin.json`](plugins/cockpit/.claude-plugin/plugin.json)). Tested on Claude Code 2.1.295.
+**cockpit for Claude Code** is a plugin that puts context usage and session cost in the status line, alerts you when cost, context or a rate limit crosses a line you set, adds a `/cockpit` dashboard with rate-limit reset times, burn rate and MCP server health, and blocks `rm -rf` and other recursive deletes in Dropbox, iCloud Drive, Google Drive and OneDrive folders, and in any folder you protect.
+
+It is a community plugin by Izzatullah Mustafa ([@izzatum](https://github.com/izzatum) on GitHub), not affiliated with Anthropic, and not related to the Cockpit Linux web console. It is for developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. The GitHub repo `izzatum/claude-code-cockpit` is also its plugin marketplace. Free and open source under the MIT license. Version 0.4.0 (the source of truth is [`plugin.json`](plugins/cockpit/.claude-plugin/plugin.json)). Tested on Claude Code 2.1.295.
 
 <p align="center"><img src="assets/cockpit-hero.svg" alt="cockpit for Claude Code: Dash, a gauge-faced pilot bot, gives a thumbs-up beside gauges for context at 31%, cost of $0.84 against a $5.00 alert and the cloud-sync guard switched on, above the status line web-app · ctx 31% · $0.84 · caveman" width="800"></p>
 
@@ -21,9 +23,10 @@ It is a community plugin by Izzatullah Mustafa ([@izzatum](https://github.com/iz
  │     + if (!token) return redirect('/login')            │                                    │
  │                                                        │ Cost                               │
  │ ✻ web-app · Sauteing…                 ◀─ spinner tag   │ $0.84 of $5.00 alert               │
+ │                                                        │ $1.12/h · alert in ~3h43m          │
  │                                                        │                                    │
  │                                                        │ Rate limits                        │
- │                                                        │ five_hour   █████░░░░░░░░░░░░ 28%  │
+ │                                                        │ five_hour   ██░░░░░░ 28% · 2h05m   │
  │                                                        │                                    │
  │                                                        │ Modes                              │
  │                                                        │ caveman                            │
@@ -89,9 +92,11 @@ This adds the marketplace if needed, then installs cockpit. To set an option at 
 | Feature | Where you see it | What it does |
 | --- | --- | --- |
 | **Status line** | Under the prompt | Project name, context used, session cost and active modes, always visible. Example: `web-app · ctx 31% · $0.84 · caveman`. |
-| **Dashboard** | `/cockpit` pane | Context bar with token count, cost against your budget, rate limits, active modes, MCP server health and how many commands the guard blocked. See [Use the dashboard](#use-the-dashboard). |
+| **Dashboard** | `/cockpit` pane | Context bar with token count, cost against your budget with the burn rate per hour, rate limits with reset times, active modes, MCP server health and how many commands the guard blocked. See [Use the dashboard](#use-the-dashboard). |
 | **Budget alert** | Pop-up | One pop-up when the session's cost reaches your budget (default $5), and the dashboard's cost turns red. See [Settings](#settings). |
-| **Cloud-sync guard** | Every Bash and Monitor command Claude runs | Blocks recursive deletes (`rm -rf`, `find -delete`, `rsync --delete`, `git clean -f` and more) in Dropbox, iCloud Drive, Google Drive and OneDrive folders, and warns before installs and builds there. See [how the guard decides](#rm--rf-guard-for-dropbox-icloud-drive-google-drive-and-onedrive). |
+| **Context alert** | Pop-up | One pop-up when the context window reaches your line (default 80%), suggesting `/compact`; it re-arms once context drops back under. |
+| **Rate-limit alert** | Pop-up | One pop-up per rate-limit window, such as the 5-hour limit, when it reaches your line (default 90% used), with the time it resets. `/clear` does not repeat it for the same window. |
+| **Cloud-sync guard** | Every Bash and Monitor command Claude runs | Blocks recursive deletes (`rm -rf`, `find -delete`, `rsync --delete`, `git clean -f` and more) in Dropbox, iCloud Drive, Google Drive and OneDrive folders, and in folders you list in `guardPaths`, and warns before installs and builds in synced folders. See [how the guard decides](#rm--rf-guard-for-dropbox-icloud-drive-google-drive-and-onedrive). |
 | **MCP server health** | Dashboard, plus one pop-up | Counts MCP servers that are connected, need sign-in, or failed. One pop-up if the session's first check finds a failed server. |
 | **Compact tool rows** | Conversation | A finished Read call (and Glob or Grep search, on Claude Code builds that have those tools) shrinks to one dim line. |
 | **Spinner tag** | Conversation | The working spinner shows which project you are in. |
@@ -99,10 +104,12 @@ This adds the marketplace if needed, then installs cockpit. To set an option at 
 ## Use the dashboard
 
 - **Open or close it:** type `/cockpit`; type it again to close it. It works while Claude is busy too.
-- **Size:** the pane needs about 20 rows, plus a few more when rate limits show. If it cannot be drawn, cockpit replies `Cockpit is open but not drawn` with the reason; make the window taller.
+- **Size:** the pane needs about 25 rows. If it cannot be drawn, cockpit replies `Cockpit is open but not drawn` with the reason; make the window taller.
 - **Best layout (terminal):** run `/tui fullscreen`. In a wide window the dashboard docks on the right as a sidebar; in a narrower one it opens above the prompt. cockpit also runs in the desktop app's Code tab.
 
 The context bar turns yellow at 60% and red at 80%, with the token count underneath, such as `62k / 200k tokens`.
+
+Under the cost, after the first 5 minutes, the dashboard shows the session's burn rate, such as `$1.12/h`, and while you are under your budget, about how long until you reach it: `alert in ~3h43m`. Each rate limit shows the time left until it resets, such as `2h05m`.
 
 **Modes** shows the caveman and ponytail plugins while they are on, with a level such as `caveman:ultra` or `ponytail:full`, and `mem` while the claude-mem plugin is enabled. These are separate plugins; cockpit only reports them. The status line joins modes with `+` (for example `caveman+ponytail:full`) and leaves them out when none are on; the dashboard says `none`.
 
@@ -119,12 +126,16 @@ Open them with:
 | Setting | Default | What it means |
 | --- | --- | --- |
 | `budget` | `5` | Cost alert in US dollars. One pop-up when the session's cost reaches it, and the dashboard's cost turns red. It fires once per session and budget value; `/clear` or a new value arms it again. `0` turns it off, and a blank value means `5`. |
+| `contextAlert` | `80` | Context alert, in percent of the context window. One pop-up when context reaches it; it re-arms when a `/compact` or `/clear` brings context back under. `0` turns it off. |
+| `rateAlert` | `90` | Rate-limit alert, in percent used. One pop-up per rate-limit window when it reaches it, with the reset time; `/clear` does not repeat it for the same window. A limit reported with no reset time alerts again only after it drops back under the line. `0` turns it off. |
+| `guardPaths` | empty | Extra folders the guard protects, split by `;`, such as `~/work; /Volumes/NAS`. See [Your own protected folders](#your-own-protected-folders). |
+| `desktopSync` | `false` | Treat `~/Desktop` and `~/Documents` as synced folders. Turn it on if iCloud Drive's "Desktop & Documents Folders" (or OneDrive folder backup) syncs them. |
 | `compactTools` | `true` | Shrink finished Read rows (and Glob or Grep, where available) to one dim line. `false` keeps Claude Code's normal rows. |
 | `projectTags` | empty | Friendly project names, as `needle=Label` pairs. See below. |
 
 <p align="center"><img src="assets/cost-alert.svg" alt="cockpit's cost alert: a budget gauge reaches $5.00 and a pop-up says cockpit: session cost $5.00 reached your $5.00 alert; once per session and budget, default $5, 0 turns it off" width="800"></p>
 
-If you edit `settings.json` by hand, use a number for `budget` and `true` or `false` for `compactTools`.
+If you edit `settings.json` by hand, use numbers for `budget`, `contextAlert` and `rateAlert`, and `true` or `false` for `desktopSync` and `compactTools`.
 
 ### Project tags (optional)
 
@@ -153,6 +164,7 @@ The cloud-sync guard is a check that runs before every Bash or Monitor command C
 | Google Drive | `~/Library/CloudStorage/GoogleDrive…`, or a `Google Drive` folder anywhere in the path |
 | OneDrive | `~/Library/CloudStorage/OneDrive…`, or a `OneDrive` or `OneDrive - Org` folder anywhere in the path |
 | iCloud Drive | `~/Library/Mobile Documents/` |
+| iCloud Desktop & Documents, OneDrive folder backup | `~/Desktop` and `~/Documents`, only with `desktopSync` on |
 
 Folder names need the sync app's own capitals (`Dropbox`, not `dropbox`), so a `dropbox` package or SDK folder is left alone. Shell-escaped spaces (`Google\ Drive`), Linux paths (`/home/you/Dropbox`) and Windows paths (`C:\Users\you\Dropbox`) count.
 
@@ -176,14 +188,28 @@ It also catches these commands behind `sudo`, `xargs`, `bash -c`, `&&` and simil
 
 </details>
 
+### Your own protected folders
+
+To block recursive deletes in other folders too, such as a work folder, a network drive or a backup disk, list them in `guardPaths`, split by `;`:
+
+```text
+~/work; /Volumes/NAS
+```
+
+The guard then treats these folders like synced ones: a recursive delete is blocked while Claude works inside one or when a command names one. Installs and builds there go ahead without a warning, since nothing uploads them.
+
+- **How a folder is recognised:** with `~`, `$HOME`, `${HOME}` (also `${HOME:?}`) or the full home path for your home folder (in the setting and in commands), either slash, any letter case, quoted or not (`"$HOME"/work`), with shell-escaped spaces (`My\ Projects`), and Windows paths also as Git Bash writes them (`/c/Users/you`, in the setting too). Only whole folder names count: `~/work` covers `~/work/app` but not `~/workshop`.
+- **Names only, as for the sync apps' folders:** the guard does not follow a relative name (`rm -rf work` from your home folder), a parent folder (`rm -rf ~`), a brace list (`~/{work,old}`) or paths a delete reads from a heredoc. See [Limits and caveats](#limits-and-caveats).
+
 **If the guard itself fails**, it fails closed: any recursive delete is refused, judged on the command text alone in any folder, and other commands go ahead.
 
 ## Limits and caveats
 
-- **The guard is a safety net, not a sandbox.** It reads the command's text. It misses a synced folder reached through a symlink, a glob or a variable, a lowercase path, an alias, and deletes done by a script (Python, Node) or by `mv` out of the folder. macOS iCloud "Desktop & Documents" sync (`~/Desktop`, `~/Documents`) cannot be told from the path, so it is not covered. Now and then it blocks a harmless command whose quoted text reads like a delete after a `;` or a word such as `if` or `then`.
+- **The guard is a safety net, not a sandbox.** It reads the command's text. It misses a synced folder reached through a symlink, a glob or a variable other than `$HOME`, a folder named relative to the shell's folder (`rm -rf work`, `../work`), a parent of a guarded folder (`rm -rf ~`), a brace list (`~/{work,old}`), paths a delete reads from a heredoc or a loop, a lowercase path, an alias, and deletes done by a script (Python, Node) or by `mv` out of the folder. macOS iCloud "Desktop & Documents" sync (`~/Desktop`, `~/Documents`) cannot be told from the path, so it is covered only when you turn on `desktopSync`. Now and then it blocks a harmless command whose quoted text reads like a delete after a `;` or a word such as `if` or `then`.
 - **While Claude works inside a synced folder,** every recursive delete is blocked, even one aimed somewhere else such as `/tmp`. The same goes for a command that names a synced path anywhere.
 - **Cost is Claude Code's own session cost estimate**, shown as-is. It is not a bill. If you are on a subscription plan and don't want the alert, set `budget` to `0`.
-- **Rate limits**, such as the 5-hour limit, appear only when Claude Code reports them for your session. Otherwise that section is hidden.
+- **The burn rate is the session's average** since it started. For a resumed session, Claude Code counts from its first launch, so time away lowers the rate and stretches the "alert in" estimate.
+- **Rate limits**, such as the 5-hour limit, appear only when Claude Code reports them for your session. Otherwise that section is hidden, and the rate-limit alert never fires.
 - **MCP health** runs `claude mcp list` in the background 30 seconds after a session starts, and when you open `/cockpit`, at most once every 10 minutes. A `claude -p` run, which draws nothing, skips it. That command briefly starts each configured MCP server and can take up to 2 minutes. Servers that are not configured or are waiting for your approval are left out of the counts.
 
 ## cockpit vs ccusage, /cost, /context and statusLine scripts
@@ -195,6 +221,8 @@ Claude Code already shows some of this on request, and other community tools cov
 | Context % always visible | Yes | No | On request | If you script it |
 | Session cost always visible | Yes | On request | No | If you script it |
 | Budget alert pop-up | Yes | No | No | No |
+| Context alert pop-up | Yes | No | No | No |
+| Rate-limit alert with reset time | Yes | No | No | No |
 | MCP server health | Dashboard + pop-up | No | No | If you script it |
 | Cost history across days and months | No | No | No | No |
 | Blocks recursive deletes in synced folders | Yes | No | No | No |
@@ -240,9 +268,17 @@ cockpit's guard is a function hook that Claude Code runs before every Bash and M
 
 Claude Code's `statusLine` setting in `settings.json` runs a script you write and shows its output under the prompt. A plugin can provide one instead: cockpit's status line shows the project, context %, session cost and active modes, with no script to maintain.
 
-### How do I see my Claude Code 5-hour rate limit?
+### How do I see my Claude Code 5-hour rate limit and when it resets?
 
-When Claude Code reports rate limits for your session, such as the 5-hour limit, the cockpit plugin's `/cockpit` dashboard shows one bar per limit with the percent used. If Claude Code reports none, the section is hidden.
+When Claude Code reports rate limits for your session, such as the 5-hour limit, the cockpit plugin's `/cockpit` dashboard shows one bar per limit with the percent used and the time left until it resets, such as `2h05m`. cockpit also shows one pop-up when a limit reaches 90% used (the `rateAlert` setting). If Claude Code reports none, the section is hidden.
+
+### How do I get warned before the Claude Code context window fills up?
+
+Install the cockpit plugin: it shows one pop-up when context reaches 80% of the window, suggesting `/compact` to free room or `/clear` to start fresh. Change the line with the `contextAlert` setting, or set it to `0` to turn the alert off. The alert re-arms once context drops back under the line.
+
+### How do I protect a folder from rm -rf in Claude Code?
+
+List the folder in cockpit's `guardPaths` setting, for example `~/work; /Volumes/NAS`. cockpit's guard then blocks `rm -rf`, `find -delete`, `rsync --delete`, `git clean -f` and other recursive deletes while Claude works in that folder or when a command names it. See [Your own protected folders](#your-own-protected-folders).
 
 ### What is the difference between cockpit, ccusage and ccstatusline?
 
@@ -277,7 +313,7 @@ It is as exact as Claude Code's own context and token usage figures, which cockp
 | Problem | Fix |
 | --- | --- |
 | No status line | Run `/reload-plugins`, or restart Claude Code. |
-| Dashboard is cut off or "not drawn" | Make the window taller; the pane needs about 20 rows. See [Use the dashboard](#use-the-dashboard). |
+| Dashboard is cut off or "not drawn" | Make the window taller; the pane needs about 25 rows. See [Use the dashboard](#use-the-dashboard). |
 | MCP servers says "unavailable" | Run `claude mcp list` in a terminal to see why. The check needs the `claude` command on PATH. |
 | A delete says the guard "could not check" it | The guard failed and refused the delete to be safe. Run the delete yourself, or start `claude --debug` and look for `cockpit:` lines. `/plugin disable cockpit@claude-code-cockpit` turns cockpit off until it is fixed. |
 | A harmless command was blocked | The guard reads text, so quoted words after `;`, `if` or `then` can look like a delete. Run that command yourself. |
@@ -315,6 +351,8 @@ claude plugin test plugins/cockpit
 ```
 
 The version lives in `plugin.json` only. Raise it with each release so `claude plugin update` picks the release up.
+
+[CI](.github/workflows/ci.yml) runs both validations and the tests on every push to `master` and every pull request, on the Claude Code version named under "Tested on". Raise that version in the workflow and the README together.
 
 Load a local copy while you work on it:
 

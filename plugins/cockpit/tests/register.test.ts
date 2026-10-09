@@ -15,10 +15,16 @@ function shell($: Engine, tool: 'Bash' | 'Monitor', command: string): Promise<un
 // The engine beneath the plugin: usage figures, folders and what reached the screen.
 function world(on: On, opts: { cwd?: string; isCwdBroken?: boolean; surfaces?: ('terminal' | 'desktop')[] } = {}) {
   const seen = { status: [] as (string | undefined)[], toasts: [] as string[], ran: [] as string[] }
-  const usage = { startedAt: 1, usd: 1 }
+  const usage = { startedAt: 1, usd: 1, percent: 10, rateLimits: [] as { kind: string; percentUsed: number; resetsAt?: string }[] }
+  const clock = mock.clock(on, { now: 1_000_000 })
   mock.env(on, { HOME: '/home/me' })
   on('session.usage', () => ({
-    value: { startedAt: usage.startedAt, context: { percent: 10, tokens: 20_000, window: 200_000 }, rateLimits: [], cost: { usd: usage.usd } },
+    value: {
+      startedAt: usage.startedAt,
+      context: { percent: usage.percent, tokens: usage.percent * 2_000, window: 200_000 },
+      rateLimits: usage.rateLimits,
+      cost: { usd: usage.usd },
+    },
   }))
   on('session.root', () => ({ value: '/home/me/code/acme-web' }))
   on('session.surfaces', () => ({ value: opts.surfaces ?? ['terminal'] }))
@@ -32,7 +38,7 @@ function world(on: On, opts: { cwd?: string; isCwdBroken?: boolean; surfaces?: (
   on('session.measure', ($, e) => ({ changed: e.changed }))
   on('tool.call', ($, e) => (seen.ran.push(String(e.tool)), { result: 'ran' }))
   const measure = { context: { percent: 10, tokens: 20_000, window: 200_000 }, rateLimits: [], changed: ['cost' as const] }
-  return { seen, usage, measure }
+  return { seen, usage, measure, clock }
 }
 
 test('a project tag reaches the status line', { options: { projectTags: 'acme=Acme' } }, async ($, on) => {
@@ -73,6 +79,109 @@ test('the guard blocks a recursive delete in a synced folder, from Bash or Monit
   }
 })
 
+test('/clear starts the blocked count over', async ($, on) => {
+  const { usage, measure } = world(on, { cwd: SYNCED })
+  await $.session.measure(measure)
+  await shell($, 'Bash', 'rm -rf dist')
+  usage.startedAt = 2 // /clear
+  await $.session.measure(measure)
+  const pane = await $.ui.mount({ plugin: 'cockpit', surface: 'terminal', component: 'Pane', requestId: 'cockpit', props: PANE_PROPS })
+  expect(await pane.find({ text: 'nothing blocked' })).toBeDefined()
+})
+
+test('protected folders block deletes there, with no install warning', { options: { guardPaths: '~/work; /Volumes/NAS' } }, async ($, on) => {
+  const { seen } = world(on, { cwd: '/home/me/work/app' })
+  expect(await shell($, 'Bash', 'rm -rf dist')).toHaveProperty('deny', expect.stringContaining('guardPaths'))
+  expect(await shell($, 'Bash', 'npm install')).toEqual({ result: 'ran' })
+  expect(seen.toasts).toEqual([])
+  expect(await shell($, 'Bash', 'cd /tmp && rm -rf /Volumes/NAS/backup')).toHaveProperty('deny')
+})
+
+test('desktopSync guards ~/Documents like a synced folder', { options: { desktopSync: true } }, async ($, on) => {
+  const { seen } = world(on, { cwd: '/home/me/Documents/app' })
+  expect(await shell($, 'Bash', 'rm -rf dist')).toHaveProperty('deny', expect.stringContaining('cloud-synced'))
+  await shell($, 'Bash', 'npm install')
+  expect(seen.toasts).toEqual([expect.stringContaining('installs and builds')])
+})
+
+test('desktopSync is off by default', async ($, on) => {
+  const { seen } = world(on, { cwd: '/home/me/Documents/app' })
+  expect(await shell($, 'Bash', 'rm -rf dist')).toEqual({ result: 'ran' })
+  expect(seen.ran).toEqual(['Bash'])
+})
+
+test('the context alert fires on the way up, and again after a /compact', async ($, on) => {
+  const { seen, usage, measure } = world(on)
+  const alerts = () => seen.toasts.filter(t => t.includes('context is'))
+  usage.percent = 79
+  await $.session.measure(measure)
+  expect(alerts()).toEqual([])
+  usage.percent = 81
+  await $.session.measure(measure)
+  await $.session.measure(measure)
+  expect(alerts()).toEqual(['cockpit: context is 81% full (alert at 80%): /compact frees room, /clear starts fresh'])
+  usage.percent = 20 // compacted
+  await $.session.measure(measure)
+  usage.percent = 85
+  await $.session.measure(measure)
+  expect(alerts().length).toBe(2)
+})
+
+test('contextAlert 0 turns the context alert off', { options: { contextAlert: 0 } }, async ($, on) => {
+  const { seen, usage, measure } = world(on)
+  usage.percent = 99
+  await $.session.measure(measure)
+  expect(seen.toasts).toEqual([])
+})
+
+test('a rate limit alerts once per window, with its reset time', async ($, on) => {
+  const { seen, usage, measure } = world(on)
+  const resetsAt = new Date(1_000_000 + 65 * 60_000).toISOString()
+  usage.rateLimits = [{ kind: 'five_hour', percentUsed: 92, resetsAt }, { kind: 'seven_day', percentUsed: 40 }]
+  await $.session.measure(measure)
+  await $.session.measure(measure)
+  expect(seen.toasts).toEqual(['cockpit: five_hour rate limit 92% used, resets in 1h05m'])
+  usage.rateLimits = [{ kind: 'five_hour', percentUsed: 95, resetsAt: new Date(1_000_000 + 5 * 3_600_000).toISOString() }]
+  await $.session.measure(measure) // the next window
+  expect(seen.toasts.length).toBe(2)
+})
+
+test('the dashboard shows reset times and the burn rate', async ($, on) => {
+  const { usage, measure, clock } = world(on)
+  usage.startedAt = 1_000_000
+  usage.usd = 2
+  usage.rateLimits = [{ kind: 'five_hour', percentUsed: 28, resetsAt: new Date(1_000_000 + 3 * 3_600_000).toISOString() }]
+  await $.session.measure(measure)
+  await clock.advance(3_600_000) // an hour in: $2.00/h, $3 to go
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const pane = await $.ui.mount({ plugin: 'cockpit', surface, component: 'Pane', requestId: 'cockpit', props: { ...PANE_PROPS, bodyColumns: 40 } })
+    expect(await pane.find({ text: '$2.00/h · alert in ~1h30m' })).toBeDefined()
+    expect(await pane.find({ text: /2h00m/ })).toBeDefined()
+  }
+})
+
+test('a rate-limit window alerts once, across /clear too', async ($, on) => {
+  const { seen, usage, measure } = world(on)
+  usage.rateLimits = [{ kind: 'five_hour', percentUsed: 92, resetsAt: new Date(1_000_000 + 3_600_000).toISOString() }]
+  await $.session.measure(measure)
+  usage.startedAt = 2 // /clear, same account window
+  await $.session.measure(measure)
+  expect(seen.toasts.filter(t => t.includes('rate limit')).length).toBe(1)
+})
+
+test('countdowns in the open pane move each minute with no other write', async ($, on) => {
+  const { usage, measure, clock } = world(on)
+  mcpList(on)
+  on('ui.panes', () => ({ value: [{ id: 'cockpit', isShown: true, isPlaced: true }] }) as never)
+  usage.rateLimits = [{ kind: 'five_hour', percentUsed: 28, resetsAt: new Date(1_000_000 + 2 * 3_600_000).toISOString() }]
+  await $.session.start(START)
+  await $.session.measure(measure)
+  const pane = await $.ui.mount({ plugin: 'cockpit', surface: 'terminal', component: 'Pane', requestId: 'cockpit', props: { ...PANE_PROPS, bodyColumns: 40 } })
+  expect(await pane.find({ text: /2h00m/ })).toBeDefined()
+  await clock.advance(60_000)
+  expect(await pane.find({ text: /1h59m/ })).toBeDefined()
+})
+
 // Counts `claude mcp list` runs; each finds one failed server.
 function mcpList(on: On): { runs: number } {
   const count = { runs: 0 }
@@ -87,8 +196,7 @@ function mcpList(on: On): { runs: number } {
 const START = { cwd: '/home/me/code/acme-web', surface: 'terminal', isInteractive: true } as const
 
 test('MCP health runs once, later, and pops up only the first result', async ($, on) => {
-  const { seen } = world(on)
-  const clock = mock.clock(on, { now: 1_000_000 })
+  const { seen, clock } = world(on)
   const count = mcpList(on)
   await $.session.start(START)
   expect(count.runs).toBe(0)
@@ -102,8 +210,7 @@ test('MCP health runs once, later, and pops up only the first result', async ($,
 })
 
 test('MCP health skips a run that draws nowhere (claude -p)', async ($, on) => {
-  const { seen } = world(on, { surfaces: [] })
-  const clock = mock.clock(on, { now: 1_000_000 })
+  const { seen, clock } = world(on, { surfaces: [] })
   const count = mcpList(on)
   await $.session.start({ ...START, isInteractive: false })
   await clock.advance(60_000)
@@ -112,8 +219,7 @@ test('MCP health skips a run that draws nowhere (claude -p)', async ($, on) => {
 })
 
 test('MCP health that cannot run says so instead of checking forever', async ($, on) => {
-  world(on)
-  const clock = mock.clock(on, { now: 1_000_000 })
+  const { clock } = world(on)
   on('process.run', () => {
     throw new Error('claude: not found')
   })
