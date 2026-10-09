@@ -2,7 +2,7 @@
 
 **cockpit for Claude Code** is a plugin that puts context usage and session cost in the status line, adds a budget alert and a `/cockpit` dashboard with rate limits and MCP server health, and blocks `rm -rf` and other recursive deletes in Dropbox, iCloud Drive, Google Drive and OneDrive folders.
 
-It is a community plugin by izzatum, not affiliated with Anthropic, and not related to the Cockpit Linux web console. It is for developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. cockpit is the first plugin in **claude-mods** (`izzatum/claude-mods`), a Claude Code plugin marketplace on GitHub. Free and open source under the MIT license. Version 0.3.0 (the source of truth is [`plugin.json`](plugins/cockpit/.claude-plugin/plugin.json)). Tested on Claude Code 2.1.295.
+It is a community plugin by izzatum, not affiliated with Anthropic, and not related to the Cockpit Linux web console. It is for developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. The GitHub repo `izzatum/claude-code-cockpit` is also its plugin marketplace. Free and open source under the MIT license. Version 0.3.0 (the source of truth is [`plugin.json`](plugins/cockpit/.claude-plugin/plugin.json)). Tested on Claude Code 2.1.295.
 
 <p align="center"><img src="assets/cockpit-hero.svg" alt="cockpit for Claude Code: Dash, a gauge-faced pilot bot, gives a thumbs-up beside gauges for context at 31%, cost of $0.84 against a $5.00 alert and the cloud-sync guard switched on, above the status line web-app · ctx 31% · $0.84 · caveman" width="800"></p>
 
@@ -64,7 +64,7 @@ cockpit is a "mod": a Claude Code plugin built from function hooks that draw int
 1. In Claude Code, in a terminal, run:
 
    ```text
-   /plugin install cockpit --marketplace izzatum/claude-mods
+   /plugin install cockpit --marketplace izzatum/claude-code-cockpit
    ```
 
 2. Confirm adding the marketplace, keep the default (user) scope, and set or skip the options.
@@ -75,7 +75,7 @@ That's it. The status line appears at the bottom of the screen. Type `/cockpit` 
 <summary>Install from your shell instead</summary>
 
 ```bash
-claude plugin install cockpit --marketplace izzatum/claude-mods
+claude plugin install cockpit --marketplace izzatum/claude-code-cockpit
 ```
 
 This adds the marketplace if needed, then installs cockpit. To set an option at the same time, add `--config`, for example `--config budget=10`. Then start a new session, or run `/reload-plugins` in one that is already open.
@@ -113,7 +113,7 @@ The context bar turns yellow at 60% and red at 80%, with the token count underne
 Open them with:
 
 ```text
-/plugin configure cockpit@claude-mods
+/plugin configure cockpit@claude-code-cockpit
 ```
 
 | Setting | Default | What it means |
@@ -214,7 +214,7 @@ Run Claude Code's built-in `/cost` command for a one-off check. To see it all th
 
 ### How do I get a budget alert in Claude Code?
 
-Set cockpit's `budget` option to an amount in US dollars (default `5`) with `/plugin configure cockpit@claude-mods`. When the session's cost reaches it, cockpit shows one pop-up and turns the dashboard's cost red. See [Settings](#settings).
+Set cockpit's `budget` option to an amount in US dollars (default `5`) with `/plugin configure cockpit@claude-code-cockpit`. When the session's cost reaches it, cockpit shows one pop-up and turns the dashboard's cost red. See [Settings](#settings).
 
 ### Can Claude Code delete files in my Dropbox, iCloud Drive, Google Drive or OneDrive?
 
@@ -246,7 +246,7 @@ Run `/mcp` in Claude Code, or `claude mcp list` in a terminal. To keep an eye on
 
 ### How do I install a Claude Code plugin from GitHub?
 
-Add the GitHub repository as a plugin marketplace, then install the plugin from it: `claude plugin marketplace add izzatum/claude-mods`, then `claude plugin install cockpit@claude-mods`. `claude plugin install cockpit --marketplace izzatum/claude-mods` does both in one step. Start a new session or run `/reload-plugins` afterwards.
+Add the GitHub repository as a plugin marketplace, then install the plugin from it: `claude plugin marketplace add izzatum/claude-code-cockpit`, then `claude plugin install cockpit@claude-code-cockpit`. `claude plugin install cockpit --marketplace izzatum/claude-code-cockpit` does both in one step. Start a new session or run `/reload-plugins` afterwards.
 
 ### Does cockpit work on Windows, Linux and WSL?
 
@@ -271,17 +271,17 @@ It is as exact as Claude Code's own context and token usage figures, which cockp
 | No status line | Run `/reload-plugins`, or restart Claude Code. |
 | Dashboard is cut off or "not drawn" | Make the window taller; the pane needs about 20 rows. See [Use the dashboard](#use-the-dashboard). |
 | MCP servers says "unavailable" | Run `claude mcp list` in a terminal to see why. The check needs the `claude` command on PATH. |
-| A delete says the guard "could not check" it | The guard failed and refused the delete to be safe. Run the delete yourself, or start `claude --debug` and look for `cockpit:` lines. `/plugin disable cockpit@claude-mods` turns cockpit off until it is fixed. |
+| A delete says the guard "could not check" it | The guard failed and refused the delete to be safe. Run the delete yourself, or start `claude --debug` and look for `cockpit:` lines. `/plugin disable cockpit@claude-code-cockpit` turns cockpit off until it is fixed. |
 | A harmless command was blocked | The guard reads text, so quoted words after `;`, `if` or `then` can look like a delete. Run that command yourself. |
 | Something else looks broken | Start Claude Code with `claude --debug` and look for lines that contain `cockpit:`. |
 
 ## Uninstall
 
 ```text
-/plugin uninstall cockpit@claude-mods
+/plugin uninstall cockpit@claude-code-cockpit
 ```
 
-To remove the marketplace too (optional): `/plugin marketplace remove claude-mods`.
+To remove the marketplace too (optional): `/plugin marketplace remove claude-code-cockpit`.
 
 ## For developers
 

@@ -1,10 +1,10 @@
-# cockpit for Claude Code (claude-mods plugin)
+# cockpit for Claude Code (izzatum/claude-code-cockpit)
 
 > cockpit for Claude Code is a plugin that puts context usage and session cost in the status line, adds a budget alert and a `/cockpit` dashboard with rate limits and MCP server health, and blocks `rm -rf` and other recursive deletes in Dropbox, iCloud Drive, Google Drive and OneDrive folders. Free and open source (MIT). Version 0.3.0 (see plugin.json). Tested on Claude Code 2.1.295.
 
-A community plugin by izzatum, not affiliated with Anthropic, and not related to the Cockpit Linux web console. For developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. claude-mods (izzatum/claude-mods on GitHub) is a Claude Code plugin marketplace; cockpit is its first plugin.
+A community plugin by izzatum, not affiliated with Anthropic, and not related to the Cockpit Linux web console. For developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. The GitHub repo izzatum/claude-code-cockpit is also its plugin marketplace.
 
-Install inside Claude Code: `/plugin install cockpit --marketplace izzatum/claude-mods`. From a shell: `claude plugin install cockpit --marketplace izzatum/claude-mods` (add `--config budget=10` to set an option), or `claude plugin marketplace add izzatum/claude-mods`, then `claude plugin install cockpit@claude-mods`.
+Install inside Claude Code: `/plugin install cockpit --marketplace izzatum/claude-code-cockpit`. From a shell: `claude plugin install cockpit --marketplace izzatum/claude-code-cockpit` (add `--config budget=10` to set an option), or `claude plugin marketplace add izzatum/claude-code-cockpit`, then `claude plugin install cockpit@claude-code-cockpit`.
 
 Key facts:
 
@@ -19,44 +19,44 @@ Key facts:
 
 ## Docs
 
-- [README (Markdown)](https://raw.githubusercontent.com/izzatum/claude-mods/HEAD/README.md): the full documentation as plain Markdown
-- [Quick start](https://github.com/izzatum/claude-mods#quick-start): install in one command
-- [Features](https://github.com/izzatum/claude-mods#features): status line, dashboard, budget alert, cloud-sync guard, MCP server health, compact tool rows, spinner tag
-- [Use the dashboard](https://github.com/izzatum/claude-mods#use-the-dashboard): opening and closing `/cockpit`, pane size, context bar colours, modes
-- [Settings](https://github.com/izzatum/claude-mods#settings): `budget`, `compactTools`, `projectTags`
-- [rm -rf guard for Dropbox, iCloud Drive, Google Drive and OneDrive](https://github.com/izzatum/claude-mods#rm--rf-guard-for-dropbox-icloud-drive-google-drive-and-onedrive): synced folders recognised, and which commands are blocked, warned or allowed
-- [Limits and caveats](https://github.com/izzatum/claude-mods#limits-and-caveats): what the guard misses, what cost and rate limits mean, MCP check timing
-- [cockpit vs ccusage, /cost, /context and statusLine scripts](https://github.com/izzatum/claude-mods#cockpit-vs-ccusage-cost-context-and-statusline-scripts): how cockpit compares with built-in commands, custom status line scripts and usage-report CLIs
-- [Troubleshooting](https://github.com/izzatum/claude-mods#troubleshooting): missing status line, MCP "unavailable", guard "could not check"
-- [Uninstall](https://github.com/izzatum/claude-mods#uninstall): remove the plugin and marketplace
+- [README (Markdown)](https://raw.githubusercontent.com/izzatum/claude-code-cockpit/HEAD/README.md): the full documentation as plain Markdown
+- [Quick start](https://github.com/izzatum/claude-code-cockpit#quick-start): install in one command
+- [Features](https://github.com/izzatum/claude-code-cockpit#features): status line, dashboard, budget alert, cloud-sync guard, MCP server health, compact tool rows, spinner tag
+- [Use the dashboard](https://github.com/izzatum/claude-code-cockpit#use-the-dashboard): opening and closing `/cockpit`, pane size, context bar colours, modes
+- [Settings](https://github.com/izzatum/claude-code-cockpit#settings): `budget`, `compactTools`, `projectTags`
+- [rm -rf guard for Dropbox, iCloud Drive, Google Drive and OneDrive](https://github.com/izzatum/claude-code-cockpit#rm--rf-guard-for-dropbox-icloud-drive-google-drive-and-onedrive): synced folders recognised, and which commands are blocked, warned or allowed
+- [Limits and caveats](https://github.com/izzatum/claude-code-cockpit#limits-and-caveats): what the guard misses, what cost and rate limits mean, MCP check timing
+- [cockpit vs ccusage, /cost, /context and statusLine scripts](https://github.com/izzatum/claude-code-cockpit#cockpit-vs-ccusage-cost-context-and-statusline-scripts): how cockpit compares with built-in commands, custom status line scripts and usage-report CLIs
+- [Troubleshooting](https://github.com/izzatum/claude-code-cockpit#troubleshooting): missing status line, MCP "unavailable", guard "could not check"
+- [Uninstall](https://github.com/izzatum/claude-code-cockpit#uninstall): remove the plugin and marketplace
 
 ## FAQ
 
-- [How do I see Claude Code context usage?](https://github.com/izzatum/claude-mods#how-do-i-see-claude-code-context-usage): built-in `/context` on request; cockpit keeps `ctx N%` in the status line and a context bar with the token count in `/cockpit`.
-- [How do I track Claude Code cost per session?](https://github.com/izzatum/claude-mods#how-do-i-track-claude-code-cost-per-session): built-in `/cost` on request; cockpit keeps the session cost in the status line, updated after each turn.
-- [How do I get a budget alert in Claude Code?](https://github.com/izzatum/claude-mods#how-do-i-get-a-budget-alert-in-claude-code): set cockpit's `budget` option (default 5 US dollars) with `/plugin configure cockpit@claude-mods`.
-- [Can Claude Code delete files in my Dropbox, iCloud Drive, Google Drive or OneDrive?](https://github.com/izzatum/claude-mods#can-claude-code-delete-files-in-my-dropbox-icloud-drive-google-drive-or-onedrive): yes; cockpit's guard blocks recursive deletes in those folders.
-- [How do I stop Claude Code from running rm -rf?](https://github.com/izzatum/claude-mods#how-do-i-stop-claude-code-from-running-rm--rf): a permissions deny rule in settings.json, or a hook that checks each command before it runs, such as cockpit's guard for synced folders.
-- [Why use a hook instead of a CLAUDE.md rule?](https://github.com/izzatum/claude-mods#why-use-a-hook-instead-of-a-claudemd-rule): Claude Code runs the hook before each command, whatever the model decides; a CLAUDE.md rule can be missed.
-- [How do I add a custom status line to Claude Code?](https://github.com/izzatum/claude-mods#how-do-i-add-a-custom-status-line-to-claude-code): the `statusLine` setting runs your own script; cockpit provides one with no script to maintain.
-- [How do I see my Claude Code 5-hour rate limit?](https://github.com/izzatum/claude-mods#how-do-i-see-my-claude-code-5-hour-rate-limit): when Claude Code reports rate limits, `/cockpit` shows one bar per limit with the percent used.
-- [What is the difference between cockpit, ccusage and ccstatusline?](https://github.com/izzatum/claude-mods#what-is-the-difference-between-cockpit-ccusage-and-ccstatusline): live session view plus a synced-folder guard, versus cost history, versus a configurable status line.
-- [How do I check whether my MCP servers are connected?](https://github.com/izzatum/claude-mods#how-do-i-check-whether-my-mcp-servers-are-connected): `/mcp` or `claude mcp list`; cockpit counts connected, need-sign-in and failed servers in `/cockpit`.
-- [How do I install a Claude Code plugin from GitHub?](https://github.com/izzatum/claude-mods#how-do-i-install-a-claude-code-plugin-from-github): add the repository as a marketplace, then install the plugin from it.
-- [Does cockpit work on Windows, Linux and WSL?](https://github.com/izzatum/claude-mods#does-cockpit-work-on-windows-linux-and-wsl): it is TypeScript with no native parts; the guard recognises macOS, Linux and Windows paths; the MCP check needs `claude` on PATH.
-- [Is cockpit free?](https://github.com/izzatum/claude-mods#is-cockpit-free): yes, MIT, with no account, API key or model calls.
-- [Does cockpit send my data anywhere?](https://github.com/izzatum/claude-mods#does-cockpit-send-my-data-anywhere): no requests of its own; `claude mcp list` connects to each configured MCP server.
-- [Is the context percentage exact?](https://github.com/izzatum/claude-mods#is-the-context-percentage-exact): as exact as Claude Code's own figure, shown as-is.
+- [How do I see Claude Code context usage?](https://github.com/izzatum/claude-code-cockpit#how-do-i-see-claude-code-context-usage): built-in `/context` on request; cockpit keeps `ctx N%` in the status line and a context bar with the token count in `/cockpit`.
+- [How do I track Claude Code cost per session?](https://github.com/izzatum/claude-code-cockpit#how-do-i-track-claude-code-cost-per-session): built-in `/cost` on request; cockpit keeps the session cost in the status line, updated after each turn.
+- [How do I get a budget alert in Claude Code?](https://github.com/izzatum/claude-code-cockpit#how-do-i-get-a-budget-alert-in-claude-code): set cockpit's `budget` option (default 5 US dollars) with `/plugin configure cockpit@claude-code-cockpit`.
+- [Can Claude Code delete files in my Dropbox, iCloud Drive, Google Drive or OneDrive?](https://github.com/izzatum/claude-code-cockpit#can-claude-code-delete-files-in-my-dropbox-icloud-drive-google-drive-or-onedrive): yes; cockpit's guard blocks recursive deletes in those folders.
+- [How do I stop Claude Code from running rm -rf?](https://github.com/izzatum/claude-code-cockpit#how-do-i-stop-claude-code-from-running-rm--rf): a permissions deny rule in settings.json, or a hook that checks each command before it runs, such as cockpit's guard for synced folders.
+- [Why use a hook instead of a CLAUDE.md rule?](https://github.com/izzatum/claude-code-cockpit#why-use-a-hook-instead-of-a-claudemd-rule): Claude Code runs the hook before each command, whatever the model decides; a CLAUDE.md rule can be missed.
+- [How do I add a custom status line to Claude Code?](https://github.com/izzatum/claude-code-cockpit#how-do-i-add-a-custom-status-line-to-claude-code): the `statusLine` setting runs your own script; cockpit provides one with no script to maintain.
+- [How do I see my Claude Code 5-hour rate limit?](https://github.com/izzatum/claude-code-cockpit#how-do-i-see-my-claude-code-5-hour-rate-limit): when Claude Code reports rate limits, `/cockpit` shows one bar per limit with the percent used.
+- [What is the difference between cockpit, ccusage and ccstatusline?](https://github.com/izzatum/claude-code-cockpit#what-is-the-difference-between-cockpit-ccusage-and-ccstatusline): live session view plus a synced-folder guard, versus cost history, versus a configurable status line.
+- [How do I check whether my MCP servers are connected?](https://github.com/izzatum/claude-code-cockpit#how-do-i-check-whether-my-mcp-servers-are-connected): `/mcp` or `claude mcp list`; cockpit counts connected, need-sign-in and failed servers in `/cockpit`.
+- [How do I install a Claude Code plugin from GitHub?](https://github.com/izzatum/claude-code-cockpit#how-do-i-install-a-claude-code-plugin-from-github): add the repository as a marketplace, then install the plugin from it.
+- [Does cockpit work on Windows, Linux and WSL?](https://github.com/izzatum/claude-code-cockpit#does-cockpit-work-on-windows-linux-and-wsl): it is TypeScript with no native parts; the guard recognises macOS, Linux and Windows paths; the MCP check needs `claude` on PATH.
+- [Is cockpit free?](https://github.com/izzatum/claude-code-cockpit#is-cockpit-free): yes, MIT, with no account, API key or model calls.
+- [Does cockpit send my data anywhere?](https://github.com/izzatum/claude-code-cockpit#does-cockpit-send-my-data-anywhere): no requests of its own; `claude mcp list` connects to each configured MCP server.
+- [Is the context percentage exact?](https://github.com/izzatum/claude-code-cockpit#is-the-context-percentage-exact): as exact as Claude Code's own figure, shown as-is.
 
 ## Source
 
-- [plugin.json](https://github.com/izzatum/claude-mods/blob/HEAD/plugins/cockpit/.claude-plugin/plugin.json): plugin name, version and settings schema
-- [marketplace.json](https://github.com/izzatum/claude-mods/blob/HEAD/.claude-plugin/marketplace.json): the claude-mods marketplace manifest
-- [hooks/register.tsx](https://github.com/izzatum/claude-mods/blob/HEAD/plugins/cockpit/hooks/register.tsx): status line, dashboard pane, budget alert, MCP check, guard and render hooks
-- [hooks/logic.ts](https://github.com/izzatum/claude-mods/blob/HEAD/plugins/cockpit/hooks/logic.ts): the guard's patterns and other plain functions
-- [tests/logic.test.ts](https://github.com/izzatum/claude-mods/blob/HEAD/plugins/cockpit/tests/logic.test.ts): example commands the guard blocks, warns about and allows
+- [plugin.json](https://github.com/izzatum/claude-code-cockpit/blob/HEAD/plugins/cockpit/.claude-plugin/plugin.json): plugin name, version and settings schema
+- [marketplace.json](https://github.com/izzatum/claude-code-cockpit/blob/HEAD/.claude-plugin/marketplace.json): the claude-code-cockpit marketplace manifest
+- [hooks/register.tsx](https://github.com/izzatum/claude-code-cockpit/blob/HEAD/plugins/cockpit/hooks/register.tsx): status line, dashboard pane, budget alert, MCP check, guard and render hooks
+- [hooks/logic.ts](https://github.com/izzatum/claude-code-cockpit/blob/HEAD/plugins/cockpit/hooks/logic.ts): the guard's patterns and other plain functions
+- [tests/logic.test.ts](https://github.com/izzatum/claude-code-cockpit/blob/HEAD/plugins/cockpit/tests/logic.test.ts): example commands the guard blocks, warns about and allows
 
 ## Optional
 
-- [For developers](https://github.com/izzatum/claude-mods#for-developers): file layout, validate, test, load a local copy
-- [License](https://github.com/izzatum/claude-mods/blob/HEAD/LICENSE): MIT
+- [For developers](https://github.com/izzatum/claude-code-cockpit#for-developers): file layout, validate, test, load a local copy
+- [License](https://github.com/izzatum/claude-code-cockpit/blob/HEAD/LICENSE): MIT
