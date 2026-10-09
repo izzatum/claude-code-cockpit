@@ -10,7 +10,6 @@ import {
   compactLabel,
   contextCrossed,
   folderMatcher,
-  parentMatcher,
   isEnabled,
   isRecursiveDelete,
   modesOf,
@@ -222,11 +221,7 @@ export const register: Register = (on, options) => {
   // Cloud-sync guard: every shell command Claude runs, through Bash or Monitor.
   on('tool.call', { tool: ['Bash', 'Monitor'] }, async ($, e, next) => {
     const [cwd, home] = await Promise.all([$.session.cwd(), syncedPaths.length || protectedPaths.length ? homeOf($) : undefined])
-    const guard = {
-      synced: folderMatcher(syncedPaths, home),
-      protected: folderMatcher(protectedPaths, home),
-      above: parentMatcher([...syncedPaths, ...protectedPaths], home),
-    }
+    const guard = { synced: folderMatcher(syncedPaths, home), protected: folderMatcher(protectedPaths, home) }
     const verdict = syncVerdict(e.command ?? '', cwd, guard)
     if (verdict && 'deny' in verdict) {
       await update($, snap, s => ({ ...s, guarded: s.guarded + 1 }))

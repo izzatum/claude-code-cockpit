@@ -6,8 +6,6 @@ import {
   contextCrossed,
   duration,
   folderMatcher,
-  joinPath,
-  parentMatcher,
   parsePaths,
   rateCrossed,
   resetText,
@@ -224,14 +222,15 @@ test('a long command does not stall the guard', () => {
     `yarn${' --x'.repeat(30)} y`, // yarn flags that could parse two ways
     `sh -${'c'.repeat(50_000)}= <<EOF\nx\nEOF`, // a `sh -c` look-alike
     `rm -rf ${'{a,b}'.repeat(40)}`, // brace lists that multiply
-    `rm -rf dist && ${'cd .. && '.repeat(3000)}ls`, // many commands that act
+    `rm -rf dist && ${'cd .. && '.repeat(3000)}ls`, // many commands
+    `echo "${'${HOME:'.repeat(16_000)}"`, // home expansions that never close
   ]
   const guard = guardOf(['~/work', '/Volumes/NAS'])
   for (const command of long) {
     const t = Date.now()
     syncVerdict(command, '/home/me/code/app')
     syncVerdict(command, DIR)
-    syncVerdict(command, '/Users/me', guard) // a parent of ~/work: every check runs
+    syncVerdict(command, '/Users/me/work', guard) // inside ~/work: every check runs
     isRecursiveDelete(command)
     expect({ size: command.length, isQuick: Date.now() - t < 250 }).toEqual({ size: command.length, isQuick: true })
   }
@@ -353,7 +352,6 @@ test('protected and extra synced folders, as written or through the home folder'
   expect(syncVerdict('rm -rf dist', 'C:\\Users\\me\\Documents\\app', synced)).toHaveProperty('deny', expect.stringContaining('cloud-synced'))
   expect(syncVerdict('npm ci', '~/Desktop/app', synced)).toHaveProperty('warn')
   expect(folderMatcher([], home)).toBeUndefined()
-  expect(parentMatcher(['relative'], home)).toBeUndefined()
   expect(folderMatcher(['a.b(c)'], home)?.test('/x a.b(c)/y')).toBe(true)
   expect(folderMatcher(['a.b(c)'], home)?.test('/x aXb(c)/y')).toBe(false)
 })
@@ -412,7 +410,6 @@ test('durations, reset times and burn rate', () => {
 const guardOf = (protect: string[], home = '/Users/me', synced: string[] = []) => ({
   synced: folderMatcher(synced, home),
   protected: folderMatcher(protect, home),
-  above: parentMatcher([...synced, ...protect], home),
 })
 const verdicts = (guard: ReturnType<typeof guardOf>, rows: [string, string, Kind][]) => {
   for (const [command, cwd, want] of rows) {
@@ -421,35 +418,33 @@ const verdicts = (guard: ReturnType<typeof guardOf>, rows: [string, string, Kind
   }
 }
 
-test('protected folders through quotes, escaped spaces, relative names and parents', () => {
+test('protected folders through quotes, escaped spaces and $HOME forms', () => {
   verdicts(guardOf(['~/work', '~/My Projects']), [
     ['rm -rf "$HOME"/work', '/tmp', 'deny'],
     ['rm -rf "${HOME}"/work/old', '/tmp', 'deny'],
+    ['rm -rf "${HOME:?}/work"', '/tmp', 'deny'],
+    ['rm -rf "${HOME%/}/work"', '/tmp', 'deny'],
+    ['rm -rf "${HOMEDIR}/work"', '/tmp', undefined],
+    ['rm -rf "${HOME:?}/workshop"', '/tmp', undefined],
     ["rm -rf ~/'work'", '/tmp', 'deny'],
     ['rm -rf "/Users/me"/work', '/tmp', 'deny'],
     ['rm -rf ~/My\\ Projects/old', '/tmp', 'deny'],
     ['rm -rf ~/My\\ Projectsx/old', '/tmp', undefined],
-    ['rm -rf work', '/Users/me', 'deny'],
-    ['rm -rf ../work', '/Users/me/code', 'deny'],
-    ['rm -rf ../workshop', '/Users/me/code', undefined],
-    ['rm -rf ..', '/Users/me/code', 'deny'],
-    ['rm -rf ~', '/tmp', 'deny'],
-    ['rm -rf ~/', '/tmp', 'deny'],
-    ['rm -rf "$HOME"', '/tmp', 'deny'],
-    ['rm -rf /Users/me', '/tmp', 'deny'],
-    ['rm -rf /Users', '/tmp', 'deny'],
-    ['rm -rf build', '/Users/me', 'deny'], // the cwd is a parent of ~/work
-    ['rm -rf build', '/Users/me/code', undefined],
-    ['rm -rf ~/code/x', '/tmp', undefined],
     ['rm -rf {/tmp/x,~/work}', '/tmp', 'deny'],
     ['rm -rf `echo ~/work`', '/tmp', 'deny'],
+    ['find ~/work \\\n  -mindepth 1 \\\n  -delete', '/tmp', 'deny'],
+    ['rsync -a \\\n  --delete empty/ ~/work/', '/tmp', 'deny'],
+    ['rm -rf build', '/Users/me/code', undefined],
     ['ls ~ && npm install', '/tmp', undefined],
+    // Names only, like the sync apps' folders (documented limits).
+    ['rm -rf work', '/Users/me', undefined],
+    ['rm -rf ~', '/tmp', undefined],
+    ['rm -rf ~/{work,old}', '/tmp', undefined],
   ])
   verdicts(guardOf(['/Volumes/NAS/projects']), [
-    ['rm -rf /Volumes/NAS', '/tmp', 'deny'],
-    ['rm -rf projects', '/Volumes/NAS', 'deny'],
-    ['rm -rf other', '/Volumes/NAS/x', undefined],
-    ['rm -rf /Volumes/NASTY', '/tmp', undefined],
+    ['rm -rf /Volumes/NAS/projects/x', '/tmp', 'deny'],
+    ['rm -rf other', '/Volumes/NAS/projects/x', 'deny'],
+    ['rm -rf /Volumes/NAS/projectsx', '/tmp', undefined],
   ])
 })
 
@@ -467,23 +462,37 @@ test('guardPaths entries written with $HOME, a root, or Windows paths', () => {
     ['rm -rf /c/Users/me/Documents/app', '/tmp', 'deny'],
     ['rm -rf dist', 'C:\\Users\\me\\Documents\\app', 'deny'],
     ['npm ci', 'C:\\Users\\me\\Documents\\app', 'warn'],
-    ['npm ci', 'C:\\Users\\me', undefined], // a parent of a synced folder is not itself synced
+    ['npm ci', 'C:\\Users\\me', undefined],
     ['rm -rf dist', 'C:\\Users\\me\\code', undefined],
+    ['rm -rf dist && cmd //c "npm run build"', 'C:\\Users\\me\\code\\app', undefined],
+    ['rm -rf dist && cmd /c "npm run build"', 'C:\\Users\\me\\code\\app', undefined],
   ])
+  for (const entry of ['/c/Users/me/work', 'C:\\Users\\me\\work']) {
+    verdicts(guardOf([entry], win), [
+      ['rm -rf build', 'C:\\Users\\me\\work', 'deny'],
+      ['rm -rf ~/work', '/tmp', 'deny'],
+      ['rm -rf build', 'C:\\Users\\me\\code', undefined],
+    ])
+  }
 })
 
-test('the built-in synced folders through braces, redirects and line continuations', () => {
+test('the built-in synced folders through redirects and line continuations, not prose', () => {
   const app = '/Users/me/code/app'
   check([
     ['rm -rf {/tmp/a,~/Dropbox}', '/tmp', 'deny'],
-    ['rm -rf ~/{Dropbox,x}', '/tmp', 'deny'],
     ['cd ~/Dropbox>/dev/null && rm -rf build', '/tmp', 'deny'],
     ['rm -rf Dropbox', '/Users/me', 'deny'],
+    ['rm -rf ~/{Dropbox,"Google Drive"}/proj/node_modules', '/tmp', 'deny'],
+    ['cd ~ && rm -rf {"Google Drive",Dropbox}/tmp', '/tmp', 'deny'],
+    ['dirs=("Dropbox/cache"); rm -rf "${dirs[@]}"', '/Users/me', 'deny'],
+    ["rm -rf $'Dropbox (Team)'/x", '/Users/me', 'deny'],
     ['find ~/Dropbox/clients \\\n  -mindepth 1 \\\n  -delete', '/tmp', 'deny'],
     ['find . \\\n  -delete', '/Users/me/Dropbox/x', 'deny'],
     ['# tidy \\\nrm -rf ~/Dropbox/x', '/tmp', 'deny'], // a comment's `\` joins nothing
     ['cd ~/Dropbox/x # go \\\nrm -rf build', '/tmp', 'deny'],
-    // Product names in code and prose are not folders.
+    ['rm build.log # remove the log \\\nls -R', DIR, undefined],
+    ["cat > Dockerfile <<'EOF'\nFROM node:20\nRUN apt-get update && \\\n    rm -rf /var/lib/apt/lists/* \\\nEOF", DIR, undefined],
+    // Product names in code, prose and heredoc data are not folders.
     ["rm -rf dist && git commit -am 'Support `OneDrive` folders'", app, undefined],
     ['git commit -m "Add Dropbox, Box and S3 storage backends" && npm run build', app, undefined],
     ['rm -rf .cache && python3 -c "print(Dropbox)"', app, undefined],
@@ -492,63 +501,10 @@ test('the built-in synced folders through braces, redirects and line continuatio
     ['grep -rn "new Dropbox(" src && rm -rf dist', app, undefined],
     ["rm -rf tmp && sed -i '' 's/Dropbox(/DropboxClient(/' src/a.ts", app, undefined],
     ['node -e "const d = new Dropbox({accessToken: t})" && npm run build', app, undefined],
+    ["git rm -r src/storage/dropbox && git commit -F - <<'EOF'\nRemove the Dropbox integration\nEOF", app, undefined],
+    ["rm -rf build && cat > .env <<'EOF'\nBACKUP_DIR=/Users/me/Dropbox/backups\nEOF", app, undefined],
+    ["cat > README.md <<'EOF'\nExport to ~/Dropbox/exports\nEOF\nnpm run build", app, undefined],
   ])
   expect(isRecursiveDelete('git -C ~/work clean \\\n  -fdx')).toBe(true)
   expect(isRecursiveDelete('rm \\\n  -rf x')).toBe(true)
-})
-
-test('relative paths fold onto the cwd', () => {
-  expect(joinPath('/Users/me/code', '../work')).toBe('/Users/me/work')
-  expect(joinPath('/Users/me', './a/./b')).toBe('/Users/me/a/b')
-  expect(joinPath('/', '../..')).toBe('/')
-  expect(joinPath('C:\\Users\\me', '..\\x')).toBe('C:/Users/x')
-})
-
-test('settings folders: braces, spaced relative names, heredocs, ${HOME:?}, Git Bash entries', () => {
-  verdicts(guardOf(['~/work', '~/My Projects']), [
-    ['rm -rf ~/{work,old}', '/tmp', 'deny'],
-    ['rm -rf ~/work{,.bak}', '/tmp', 'deny'],
-    ['rm -rf /Users/me/{work,tmp}', '/tmp', 'deny'],
-    ['rm -rf ~/{a,{work,b}}', '/tmp', 'deny'],
-    ['rm -rf "../My Projects"', '/Users/me/other', 'deny'],
-    ['rm -rf ../My\\ Projects', '/Users/me/other', 'deny'],
-    ['cd "../My Projects" && rm -rf build', '/Users/me/other', 'deny'],
-    ["bash -c \"rm -rf '../My Projects'\"", '/Users/me/other', 'deny'],
-    ['bash -c "rm -rf ../work"', '/Users/me/other', 'deny'],
-    ['rm -rf "../My Projectsx"', '/Users/me/other', undefined],
-    ["xargs rm -rf <<'EOF'\n/Users/me/work\nEOF", '/tmp', 'deny'],
-    ["cat <<'EOF' | xargs rm -rf\n/Users/me/work\nEOF", '/tmp', 'deny'],
-    ['rm -rf "${HOME:?}/work"', '/tmp', 'deny'],
-    ['rm -rf "${HOME%/}/work"', '/tmp', 'deny'],
-    ['rm -rf "${HOME:?}"', '/tmp', 'deny'],
-    ['rm -rf "${HOMEDIR}/work"', '/tmp', undefined],
-    ['rm -rf "${HOME:?}/workshop"', '/tmp', undefined],
-    ['find ~/work \\\n  -mindepth 1 \\\n  -delete', '/tmp', 'deny'],
-    ['rsync -a \\\n  --delete empty/ ~/work/', '/tmp', 'deny'],
-    ['cd .. && rm -rf work', '/Users/me/code', 'deny'],
-    ['cd ~ && rm -rf work', '/tmp', 'deny'],
-    ['echo ~ | xargs rm -rf', '/tmp', 'deny'],
-    // A parent named where nothing deletes or moves is not reached.
-    ['rm -rf dist && git commit -m "CI / build fixes"', '/Users/me/code/app', undefined],
-    ['rm -rf out && echo $((10 / 2))', '/Users/me/code/app', undefined],
-    ['git clean -fdx && ls ~', '/Users/me/code/app', undefined],
-    ['rm -rf dist && echo $HOME', '/Users/me/code/app', undefined],
-    ['rm -rf build && mkdir build && cd build && cmake .. && make', '/Users/me/app', undefined],
-  ])
-  verdicts(guardOf(['$HOME/work']), [['rm -rf "${HOME:?}"/work', '/tmp', 'deny']])
-  const win = 'C:\\Users\\me'
-  for (const entry of ['/c/Users/me/work', 'C:\\Users\\me\\work']) {
-    verdicts(guardOf([entry], win), [
-      ['rm -rf build', 'C:\\Users\\me\\work', 'deny'],
-      ['rm -rf ~/work', '/tmp', 'deny'],
-      ['rm -rf ~', '/tmp', 'deny'],
-      ['rm -rf build', 'C:\\Users\\me\\code', undefined],
-    ])
-  }
-  verdicts(guardOf(['/c/work'], win), [['rm -rf build', 'C:\\work', 'deny']])
-  verdicts(guardOf([], win, ['~/Documents']), [
-    ['rm -rf dist && cmd //c "npm run build"', 'C:\\Users\\me\\code\\app', undefined],
-    ['rm -rf dist && cmd /c "npm run build"', 'C:\\Users\\me\\code\\app', undefined],
-    ['rm -rf C:\\', '/tmp', 'deny'],
-  ])
 })
