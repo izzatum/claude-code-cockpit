@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Validate and test the plugin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The Claude Code version cockpit is tested on; raise it with the README's "Tested on".
+      - run: npm install --global @anthropic-ai/claude-code@2.1.295
+      - run: claude plugin validate .
+      - run: claude plugin validate plugins/cockpit
+      - run: claude plugin test plugins/cockpit

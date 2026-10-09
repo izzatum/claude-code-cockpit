@@ -1,5 +1,5 @@
 // Pure helpers: no `$`, so tests run them directly.
-import type { McpHealth, Snapshot } from '../types'
+import type { McpHealth, RateLimit, Snapshot } from '../types'
 
 export type Verdict = { deny: string } | { warn: string } | undefined
 
@@ -41,6 +41,8 @@ const SHELL = new RegExp(CMD + String.raw`(?:(?:ba|z|da|k)?sh|eval|source)\b`, '
 
 const DENY =
   'cockpit: recursive delete inside a cloud-synced folder is blocked: the sync app would delete it on every device. Do not retry another way (find -delete, rsync, mv, a script). Tell the user what you wanted to delete and let them do it.'
+const DENY_PROTECTED =
+  'cockpit: recursive delete inside a folder the user protected (cockpit guardPaths) is blocked. Do not retry another way (find -delete, rsync, mv, a script). Tell the user what you wanted to delete and let them do it.'
 export const GUARD_FAILED =
   'cockpit: the cloud-sync guard could not check this recursive delete, so it was not run. Tell the user what you wanted to delete and let them do it.'
 
@@ -71,14 +73,46 @@ function code(command: string): string {
 // Fails closed: a guard that cannot read the cwd still refuses any recursive delete.
 export const isRecursiveDelete = (command: string): boolean => DELETE.test(code(command))
 
-export function syncVerdict(command: string, cwd: string): Verdict {
+// Folders from settings, as matchers: `synced` count as the sync apps' own (deletes blocked,
+// installs warned), `protected` only block recursive deletes.
+export type Guard = { synced?: RegExp; protected?: RegExp }
+
+export function syncVerdict(command: string, cwd: string, guard: Guard = {}): Verdict {
   const run = code(command)
-  if (!SYNCED.test(cwd) && !SYNCED.test(run)) return undefined
-  if (DELETE.test(run)) return { deny: DENY }
-  if (HEAVY.test(run)) {
+  const names = (re?: RegExp) => !!re && (re.test(cwd) || re.test(run))
+  const isSynced = SYNCED.test(cwd) || SYNCED.test(run) || names(guard.synced)
+  if (!isSynced && !names(guard.protected)) return undefined
+  if (DELETE.test(run)) return { deny: isSynced ? DENY : DENY_PROTECTED }
+  if (isSynced && HEAVY.test(run)) {
     return { warn: 'cockpit: cloud-synced folder: installs and builds here upload node_modules and build output. A local, unsynced clone avoids it.' }
   }
   return undefined
+}
+
+// "~/work; /Volumes/NAS" -> ["~/work", "/Volumes/NAS"]; trailing slashes dropped, blanks skipped.
+export function parsePaths(spec: string | undefined): string[] {
+  return (spec ?? '')
+    .split(';')
+    .map(p => p.trim().replace(/(.)[\\/]+$/, '$1'))
+    .filter(Boolean)
+}
+
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+// A matcher for these folders as a cwd or a command names them: the path as written, with `~`,
+// `$HOME` or `${HOME}` for the home folder, either slash, any letter case, ending at a path
+// boundary (so ~/work does not match ~/workshop). Undefined when there is nothing to match.
+export function folderMatcher(paths: string[], home?: string): RegExp | undefined {
+  const h = home?.replace(/[\\/]+$/, '')
+  const forms = paths.flatMap(path => {
+    const rest = path === '~' || /^~[\\/]/.test(path) ? path.slice(1) : h && tildify(path, h) !== path ? path.slice(h.length) : undefined
+    if (rest === undefined) return [escape(path)]
+    const tail = escape(rest)
+    return [String.raw`(?:~|\$HOME|\$\{HOME\}${h ? `|${escape(h)}` : ''})${tail}`]
+  })
+  if (!forms.length) return undefined
+  const slashed = forms.map(f => f.replace(/\\\\|\//g, String.raw`[\/\\]`))
+  return new RegExp(String.raw`(?:^|[\s"'=(:])(?:${slashed.join('|')})(?=$|[\/\\\s"';&|)])`, 'i')
 }
 
 export type Tag = [needle: string, label: string]
@@ -141,11 +175,53 @@ export function statusText(s: Pick<Snapshot, 'pct' | 'usd' | 'modes' | 'project'
 }
 
 // Options arrive validated, but a number field stored blank reaches register as ''.
-export const budgetOf = (value: unknown): number => (typeof value === 'number' ? value : 5)
+export const numberOf = (value: unknown, fallback: number): number => (typeof value === 'number' ? value : fallback)
 
 // Once per session and budget: `key` is `${startedAt}:${budget}`, so /clear or a new budget re-arms it.
 export function budgetCrossed(usd: number | undefined, budget: number, alertedFor: string | undefined, key: string): boolean {
   return budget > 0 && usd !== undefined && usd >= budget && alertedFor !== key
+}
+
+// The context alert fires on the way up past the line; falling back under it (a /compact,
+// a /clear) re-arms it. Before the first figure nothing changes.
+export function contextCrossed(pct: number | undefined, threshold: number, wasOver = false): { isOver: boolean; shouldAlert: boolean } {
+  const isOver = pct === undefined ? wasOver : threshold > 0 && pct >= threshold
+  return { isOver, shouldAlert: isOver && !wasOver }
+}
+
+// Once per rate-limit window: the key is the window's kind and reset time.
+export function rateCrossed(limits: RateLimit[], threshold: number, alerted: string[]): { fired: RateLimit[]; alerted: string[] } {
+  const keys = limits.map(l => `${l.kind}:${l.resetsAt ?? ''}`)
+  const fired = threshold > 0 ? limits.filter((l, i) => l.percentUsed >= threshold && !alerted.includes(keys[i] ?? '')) : []
+  // Only the windows still reported, so the list stays as short as the limits.
+  return { fired, alerted: keys.filter((k, i) => alerted.includes(k) || fired.includes(limits[i] as RateLimit)) }
+}
+
+// 5 min -> "5m", 125 min -> "2h05m", 3 days 4 h -> "3d4h"; rounded up to the minute.
+export function duration(ms: number): string {
+  const min = Math.max(1, Math.ceil(ms / 60_000))
+  if (min < 60) return `${min}m`
+  const h = Math.floor(min / 60)
+  if (h < 48) return `${h}h${String(min % 60).padStart(2, '0')}m`
+  return `${Math.floor(h / 24)}d${h % 24}h`
+}
+
+// "resets in 2h05m", "resets now", or undefined when the time is missing or unreadable.
+export function resetText(resetsAt: string | undefined, now: number): string | undefined {
+  const at = resetsAt ? Date.parse(resetsAt) : NaN
+  if (Number.isNaN(at)) return undefined
+  return at <= now ? 'resets now' : `resets in ${duration(at - now)}`
+}
+
+// ponytail: the session's average since startedAt, which for a resumed session counts the time
+// it was away too, so the rate reads low. A recent-window rate would need cost samples over time.
+// "$1.20/h · alert in ~3h30m"; undefined in the first 5 minutes or before any cost.
+export function burnText(usd: number | undefined, startedAt: number | undefined, now: number, budget: number): string | undefined {
+  const elapsed = startedAt === undefined ? 0 : now - startedAt
+  if (!usd || elapsed < 5 * 60_000) return undefined
+  const perMs = usd / elapsed
+  const rate = `${money(perMs * 3_600_000)}/h`
+  return budget > usd ? `${rate} · alert in ~${duration((budget - usd) / perMs)}` : rate
 }
 
 export function bar(pct: number, width: number): string {

@@ -1,7 +1,7 @@
 {
   "name": "cockpit",
-  "version": "0.3.0",
-  "description": "Claude Code status line plugin: context %, session cost, budget alert, /cockpit dashboard with rate limits and MCP health, and an rm -rf guard for Dropbox, iCloud Drive, Google Drive and OneDrive folders.",
+  "version": "0.4.0",
+  "description": "Claude Code status line plugin: context %, session cost, budget, context and rate-limit alerts, /cockpit dashboard with rate limits, burn rate and MCP health, and an rm -rf guard for Dropbox, iCloud Drive, Google Drive, OneDrive and your own protected folders.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "budget": {
@@ -9,6 +9,30 @@
       "title": "Cost alert (USD)",
       "description": "Show one pop-up when the session's cost reaches this many US dollars (the dashboard's cost turns red too); 0 turns it off",
       "default": 5
+    },
+    "contextAlert": {
+      "type": "number",
+      "title": "Context alert (%)",
+      "description": "Show one pop-up when the context window reaches this percent full, again after a /compact brings it back under; 0 turns it off",
+      "default": 80
+    },
+    "rateAlert": {
+      "type": "number",
+      "title": "Rate-limit alert (%)",
+      "description": "Show one pop-up per rate-limit window (such as the 5-hour limit) when it reaches this percent used, with its reset time; 0 turns it off",
+      "default": 90
+    },
+    "guardPaths": {
+      "type": "string",
+      "title": "Protected folders",
+      "description": "Extra folders where recursive deletes are blocked, split by ';' (e.g. ~/work; /Volumes/NAS). The guard treats them like synced folders but does not warn about installs there",
+      "default": ""
+    },
+    "desktopSync": {
+      "type": "boolean",
+      "title": "Guard ~/Desktop and ~/Documents",
+      "description": "Treat ~/Desktop and ~/Documents as cloud-synced folders. Turn on if macOS iCloud Drive 'Desktop & Documents Folders' (or OneDrive folder backup) syncs them",
+      "default": false
     },
     "compactTools": {
       "type": "boolean",
@@ -48,6 +72,8 @@
     "icloud",
     "google-drive",
     "onedrive",
-    "safety-hook"
+    "safety-hook",
+    "context-alert",
+    "rate-limit-alert"
   ]
 }

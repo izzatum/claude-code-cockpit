@@ -2,12 +2,19 @@ import { expect, test } from 'claude-code/testing'
 import {
   bar,
   budgetCrossed,
-  budgetOf,
+  burnText,
+  contextCrossed,
+  duration,
+  folderMatcher,
+  parsePaths,
+  rateCrossed,
+  resetText,
   compactLabel,
   isEnabled,
   isRecursiveDelete,
   modesOf,
   money,
+  numberOf,
   parseMcpList,
   parseTags,
   projectOf,
@@ -264,10 +271,10 @@ test('status line', () => {
 })
 
 test('budget alert fires once per session and budget', () => {
-  expect(budgetOf('')).toBe(5)
-  expect(budgetOf(undefined)).toBe(5)
-  expect(budgetOf(0)).toBe(0)
-  expect(budgetOf(7)).toBe(7)
+  expect(numberOf('', 5)).toBe(5)
+  expect(numberOf(undefined, 80)).toBe(80)
+  expect(numberOf(0, 5)).toBe(0)
+  expect(numberOf(7, 5)).toBe(7)
   expect(budgetCrossed(5, 5, undefined, '1:5')).toBe(true)
   expect(budgetCrossed(5.2, 5, '1:5', '1:5')).toBe(false)
   expect(budgetCrossed(4.9, 5, undefined, '1:5')).toBe(false)
@@ -308,4 +315,73 @@ test('compact rows for read-only tools, with where a search ran', () => {
   expect(compactLabel('LS', { path: '/x' })).toBeUndefined()
   expect(compactLabel('Grep', {})).toBeUndefined()
   expect(compactLabel('Read', 'nope')).toBeUndefined()
+})
+
+test('protected and extra synced folders, as written or through the home folder', () => {
+  const home = '/Users/me'
+  const guard = { protected: folderMatcher(parsePaths(' ~/work/ ; /Volumes/NAS;; '), home) }
+  const rows: [string, string, Kind][] = [
+    ['rm -rf dist', '/Users/me/work', 'deny'],
+    ['rm -rf dist', '/Users/me/work/app', 'deny'],
+    ['rm -rf dist', '/Users/me/workshop', undefined],
+    ['rm -rf dist', '/Users/me/code', undefined],
+    ['rm -rf ~/work/old', '/tmp', 'deny'],
+    ['rm -rf $HOME/work/old', '/tmp', 'deny'],
+    ['rm -rf "${HOME}/work"', '/tmp', 'deny'],
+    ['rm -rf /users/ME/Work/old', '/tmp', 'deny'],
+    ['rm -rf /Volumes/NAS', '/tmp', 'deny'],
+    ['rm -rf /Volumes/NASTY', '/tmp', undefined],
+    ['npm install', '/Users/me/work/app', undefined],
+    ['ls ~/work', '/tmp', undefined],
+  ]
+  for (const [command, cwd, want] of rows) {
+    const v = syncVerdict(command, cwd, guard)
+    expect({ command, cwd, kind: v === undefined ? undefined : 'deny' in v ? 'deny' : 'warn' }).toEqual({ command, cwd, kind: want })
+  }
+  expect(syncVerdict('rm -rf dist', '/Users/me/work', guard)).toHaveProperty('deny', expect.stringContaining('guardPaths'))
+  const synced = { synced: folderMatcher(['~/Desktop', '~/Documents'], 'C:\\Users\\me') }
+  expect(syncVerdict('rm -rf dist', 'C:\\Users\\me\\Documents\\app', synced)).toHaveProperty('deny', expect.stringContaining('cloud-synced'))
+  expect(syncVerdict('npm ci', '~/Desktop/app', synced)).toHaveProperty('warn')
+  expect(folderMatcher([], home)).toBeUndefined()
+  expect(folderMatcher(['a.b(c)'], home)?.test('/x a.b(c)/y')).toBe(true)
+  expect(folderMatcher(['a.b(c)'], home)?.test('/x aXb(c)/y')).toBe(false)
+})
+
+test('context alert crosses upward, re-arms below the line', () => {
+  expect(contextCrossed(79, 80, false)).toEqual({ isOver: false, shouldAlert: false })
+  expect(contextCrossed(80, 80, false)).toEqual({ isOver: true, shouldAlert: true })
+  expect(contextCrossed(90, 80, true)).toEqual({ isOver: true, shouldAlert: false })
+  expect(contextCrossed(undefined, 80, true)).toEqual({ isOver: true, shouldAlert: false })
+  expect(contextCrossed(20, 80, true)).toEqual({ isOver: false, shouldAlert: false })
+  expect(contextCrossed(100, 0, false)).toEqual({ isOver: false, shouldAlert: false })
+})
+
+test('rate alert fires once per window', () => {
+  const a = { kind: 'five_hour', percentUsed: 91, resetsAt: 'T1' }
+  const b = { kind: 'seven_day', percentUsed: 50, resetsAt: 'T2' }
+  expect(rateCrossed([a, b], 90, [])).toEqual({ fired: [a], alerted: ['five_hour:T1'] })
+  expect(rateCrossed([a, b], 90, ['five_hour:T1'])).toEqual({ fired: [], alerted: ['five_hour:T1'] })
+  const next = { ...a, resetsAt: 'T3' }
+  expect(rateCrossed([next], 90, ['five_hour:T1'])).toEqual({ fired: [next], alerted: ['five_hour:T3'] })
+  expect(rateCrossed([a], 0, [])).toEqual({ fired: [], alerted: [] })
+  expect(rateCrossed([], 90, ['five_hour:T1'])).toEqual({ fired: [], alerted: [] })
+})
+
+test('durations, reset times and burn rate', () => {
+  expect(duration(1)).toBe('1m')
+  expect(duration(5 * 60_000)).toBe('5m')
+  expect(duration(125 * 60_000)).toBe('2h05m')
+  expect(duration((3 * 24 + 4) * 3_600_000)).toBe('3d4h')
+  const now = Date.parse('2026-01-01T00:00:00Z')
+  expect(resetText('2026-01-01T02:05:00Z', now)).toBe('resets in 2h05m')
+  expect(resetText('2025-12-31T23:00:00Z', now)).toBe('resets now')
+  expect(resetText(undefined, now)).toBeUndefined()
+  expect(resetText('soon', now)).toBeUndefined()
+  const hour = 3_600_000
+  expect(burnText(2, 0, hour, 5)).toBe('$2.00/h · alert in ~1h30m')
+  expect(burnText(6, 0, hour, 5)).toBe('$6.00/h')
+  expect(burnText(2, 0, hour, 0)).toBe('$2.00/h')
+  expect(burnText(2, 0, 4 * 60_000, 5)).toBeUndefined()
+  expect(burnText(0, 0, hour, 5)).toBeUndefined()
+  expect(burnText(2, undefined, hour, 5)).toBeUndefined()
 })

@@ -1,6 +1,6 @@
 # cockpit for Claude Code (izzatum/claude-code-cockpit)
 
-> cockpit for Claude Code is a plugin that puts context usage and session cost in the status line, adds a budget alert and a `/cockpit` dashboard with rate limits and MCP server health, and blocks `rm -rf` and other recursive deletes in Dropbox, iCloud Drive, Google Drive and OneDrive folders. Free and open source (MIT). Version 0.3.0 (see plugin.json). Tested on Claude Code 2.1.295.
+> cockpit for Claude Code is a plugin that puts context usage and session cost in the status line, alerts you when cost, context or a rate limit crosses a line you set, adds a `/cockpit` dashboard with rate-limit reset times, burn rate and MCP server health, and blocks `rm -rf` and other recursive deletes in Dropbox, iCloud Drive, Google Drive and OneDrive folders, and in any folder you protect. Free and open source (MIT). Version 0.4.0 (see plugin.json). Tested on Claude Code 2.1.295.
 
 A community plugin by Izzatullah Mustafa (GitHub: izzatum), not affiliated with Anthropic, and not related to the Cockpit Linux web console. For developers who use Claude Code in a terminal, especially with projects inside a cloud-synced folder. The GitHub repo izzatum/claude-code-cockpit is also its plugin marketplace.
 
@@ -9,10 +9,14 @@ Install inside Claude Code: `/plugin install cockpit --marketplace izzatum/claud
 Key facts:
 
 - Status line format: `<project or tag> · ctx <N>% · $<cost> · <modes>`, for example `web-app · ctx 31% · $0.84 · caveman`. Modes are joined by `+` (for example `caveman+ponytail:full`) and omitted when none are on.
-- Settings: `budget` (number, US dollars, default 5, 0 turns the alert off), `compactTools` (boolean, default true), `projectTags` (string of `needle=Label` pairs split by `;`, default empty).
+- Settings: `budget` (number, US dollars, default 5, 0 turns the alert off), `contextAlert` (number, percent of the context window, default 80, 0 off), `rateAlert` (number, percent used, default 90, 0 off), `guardPaths` (string of folders split by `;`, default empty), `desktopSync` (boolean, default false), `compactTools` (boolean, default true), `projectTags` (string of `needle=Label` pairs split by `;`, default empty).
 - Budget alert: one pop-up per session and budget value; `/clear` or a new budget value re-arms it.
+- Context alert: one pop-up when context reaches `contextAlert`, suggesting `/compact`; it re-arms when context drops back under the line.
+- Rate-limit alert: one pop-up per rate-limit window (such as `five_hour`) when it reaches `rateAlert` percent used, with the time it resets. The dashboard shows each window's reset time too.
+- Burn rate: after 5 minutes the dashboard shows the session's average cost per hour and, under budget, about how long until the budget alert.
 - The cloud-sync guard checks every Bash and Monitor command before it runs. In a synced folder it blocks `rm -r`/`rm -rf`/`rm --recursive`, `git rm -r` (not `--cached`), `find -delete`, `rsync --delete` and `git clean -f`, and warns before `npm`/`pnpm`/`yarn`/`bun` installs and builds, `pip install` and `cargo build`. It reads command text only: it is a safety net, not a sandbox.
 - While the shell is inside a synced folder, every recursive delete is blocked, wherever it points.
+- `guardPaths` adds folders where recursive deletes are blocked too, with no install warning; `~`, `$HOME` or the full home path all match, on whole folder names. `desktopSync` treats `~/Desktop` and `~/Documents` as synced (for iCloud Desktop & Documents or OneDrive folder backup).
 - If the guard errors, it refuses any recursive delete, judged on command text, in any folder.
 - MCP health comes from `claude mcp list`, run 30 seconds after session start and when `/cockpit` opens, at most once every 10 minutes. One pop-up if the session's first check finds a failed server.
 - Context usage and cost are the figures Claude Code reports; cockpit does not count tokens, keep cost history or call any model.
@@ -21,9 +25,10 @@ Key facts:
 
 - [README (Markdown)](https://raw.githubusercontent.com/izzatum/claude-code-cockpit/HEAD/README.md): the full documentation as plain Markdown
 - [Quick start](https://github.com/izzatum/claude-code-cockpit#quick-start): install in one command
-- [Features](https://github.com/izzatum/claude-code-cockpit#features): status line, dashboard, budget alert, cloud-sync guard, MCP server health, compact tool rows, spinner tag
-- [Use the dashboard](https://github.com/izzatum/claude-code-cockpit#use-the-dashboard): opening and closing `/cockpit`, pane size, context bar colours, modes
-- [Settings](https://github.com/izzatum/claude-code-cockpit#settings): `budget`, `compactTools`, `projectTags`
+- [Features](https://github.com/izzatum/claude-code-cockpit#features): status line, dashboard, budget alert, context alert, rate-limit alert, cloud-sync guard, MCP server health, compact tool rows, spinner tag
+- [Your own protected folders](https://github.com/izzatum/claude-code-cockpit#your-own-protected-folders): the `guardPaths` setting and how its paths match
+- [Use the dashboard](https://github.com/izzatum/claude-code-cockpit#use-the-dashboard): opening and closing `/cockpit`, pane size, context bar colours, burn rate, rate-limit reset times, modes
+- [Settings](https://github.com/izzatum/claude-code-cockpit#settings): `budget`, `contextAlert`, `rateAlert`, `guardPaths`, `desktopSync`, `compactTools`, `projectTags`
 - [rm -rf guard for Dropbox, iCloud Drive, Google Drive and OneDrive](https://github.com/izzatum/claude-code-cockpit#rm--rf-guard-for-dropbox-icloud-drive-google-drive-and-onedrive): synced folders recognised, and which commands are blocked, warned or allowed
 - [Limits and caveats](https://github.com/izzatum/claude-code-cockpit#limits-and-caveats): what the guard misses, what cost and rate limits mean, MCP check timing
 - [cockpit vs ccusage, /cost, /context and statusLine scripts](https://github.com/izzatum/claude-code-cockpit#cockpit-vs-ccusage-cost-context-and-statusline-scripts): how cockpit compares with built-in commands, custom status line scripts and usage-report CLIs
@@ -41,7 +46,9 @@ Key facts:
 - [How do I stop Claude Code from running rm -rf?](https://github.com/izzatum/claude-code-cockpit#how-do-i-stop-claude-code-from-running-rm--rf): a permissions deny rule in settings.json, or a hook that checks each command before it runs, such as cockpit's guard for synced folders.
 - [Why use a hook instead of a CLAUDE.md rule?](https://github.com/izzatum/claude-code-cockpit#why-use-a-hook-instead-of-a-claudemd-rule): Claude Code runs the hook before each command, whatever the model decides; a CLAUDE.md rule can be missed.
 - [How do I add a custom status line to Claude Code?](https://github.com/izzatum/claude-code-cockpit#how-do-i-add-a-custom-status-line-to-claude-code): the `statusLine` setting runs your own script; cockpit provides one with no script to maintain.
-- [How do I see my Claude Code 5-hour rate limit?](https://github.com/izzatum/claude-code-cockpit#how-do-i-see-my-claude-code-5-hour-rate-limit): when Claude Code reports rate limits, `/cockpit` shows one bar per limit with the percent used.
+- [How do I see my Claude Code 5-hour rate limit and when it resets?](https://github.com/izzatum/claude-code-cockpit#how-do-i-see-my-claude-code-5-hour-rate-limit-and-when-it-resets): when Claude Code reports rate limits, `/cockpit` shows one bar per limit with the percent used and the time until it resets, and one pop-up fires at 90% used.
+- [How do I get warned before the Claude Code context window fills up?](https://github.com/izzatum/claude-code-cockpit#how-do-i-get-warned-before-the-claude-code-context-window-fills-up): cockpit shows one pop-up at 80% context (the `contextAlert` setting), suggesting `/compact`.
+- [How do I protect a folder from rm -rf in Claude Code?](https://github.com/izzatum/claude-code-cockpit#how-do-i-protect-a-folder-from-rm--rf-in-claude-code): list it in cockpit's `guardPaths` setting; the guard then blocks recursive deletes there.
 - [What is the difference between cockpit, ccusage and ccstatusline?](https://github.com/izzatum/claude-code-cockpit#what-is-the-difference-between-cockpit-ccusage-and-ccstatusline): live session view plus a synced-folder guard, versus cost history, versus a configurable status line.
 - [How do I check whether my MCP servers are connected?](https://github.com/izzatum/claude-code-cockpit#how-do-i-check-whether-my-mcp-servers-are-connected): `/mcp` or `claude mcp list`; cockpit counts connected, need-sign-in and failed servers in `/cockpit`.
 - [How do I install a Claude Code plugin from GitHub?](https://github.com/izzatum/claude-code-cockpit#how-do-i-install-a-claude-code-plugin-from-github): add the repository as a marketplace, then install the plugin from it.
