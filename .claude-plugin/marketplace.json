@@ -1,7 +1,8 @@
 {
   "name": "claude-code-cockpit",
   "owner": {
-    "name": "Muhammad Izzatullah"
+    "name": "Muhammad Izzatullah",
+    "url": "https://github.com/izzatum"
   },
   "metadata": {
     "description": "Claude Code plugins (mods) by izzatum: cockpit, a status line with context %, session cost, budget alert, MCP health and an rm -rf guard for cloud-synced folders."
