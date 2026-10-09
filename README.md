@@ -216,9 +216,17 @@ Run Claude Code's built-in `/cost` command for a one-off check. To see it all th
 
 Set cockpit's `budget` option to an amount in US dollars (default `5`) with `/plugin configure cockpit@claude-code-cockpit`. When the session's cost reaches it, cockpit shows one pop-up and turns the dashboard's cost red. See [Settings](#settings).
 
+### Does the cost figure apply on a Claude Pro or Max subscription?
+
+cockpit shows Claude Code's own session cost estimate as-is; it is not a bill, on a subscription or otherwise. If the figure is not useful to you, set `budget` to `0` to turn the alert off; the status line and dashboard still show it.
+
 ### Can Claude Code delete files in my Dropbox, iCloud Drive, Google Drive or OneDrive?
 
 Yes. Claude Code can run `rm -rf` in any folder it is allowed to work in, and the sync app then deletes those files on every linked device. cockpit's cloud-sync guard blocks recursive deletes in these folders and asks Claude to leave the delete to you. See [how the guard decides](#rm--rf-guard-for-dropbox-icloud-drive-google-drive-and-onedrive).
+
+### Is it safe to run Claude Code in a Dropbox, iCloud Drive or OneDrive folder?
+
+It works, with two risks. The sync app copies every change to all your devices, so a recursive delete Claude runs there removes those files everywhere, and an install or build (`npm install`, `pip install`, `cargo build`) can queue thousands of uploads. The safest setup is a local clone outside the synced folder. If you do work inside one, cockpit's guard blocks recursive deletes there and warns before installs and builds. See [Limits and caveats](#limits-and-caveats) for what it cannot see.
 
 ### How do I stop Claude Code from running rm -rf?
 

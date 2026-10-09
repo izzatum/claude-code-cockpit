@@ -15,8 +15,13 @@ keywords:
   - claude-code-plugin
   - status-line
   - context-window
+  - session-cost
   - cost-tracking
   - budget-alert
   - mcp
   - rm-rf
   - cloud-sync
+  - dropbox
+  - icloud
+  - google-drive
+  - onedrive
