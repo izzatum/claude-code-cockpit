@@ -352,8 +352,8 @@ test('protected and extra synced folders, as written or through the home folder'
   expect(syncVerdict('rm -rf dist', 'C:\\Users\\me\\Documents\\app', synced)).toHaveProperty('deny', expect.stringContaining('cloud-synced'))
   expect(syncVerdict('npm ci', '~/Desktop/app', synced)).toHaveProperty('warn')
   expect(folderMatcher([], home)).toBeUndefined()
-  expect(folderMatcher(['a.b(c)'], home)?.test('/x a.b(c)/y')).toBe(true)
-  expect(folderMatcher(['a.b(c)'], home)?.test('/x aXb(c)/y')).toBe(false)
+  expect(folderMatcher(['a.b(c)'], home)?.text.test('/x a.b(c)/y')).toBe(true)
+  expect(folderMatcher(['a.b(c)'], home)?.text.test('/x aXb(c)/y')).toBe(false)
 })
 
 test('context alert crosses upward, re-arms below the line', () => {
@@ -504,7 +504,35 @@ test('the built-in synced folders through redirects and line continuations, not 
     ["git rm -r src/storage/dropbox && git commit -F - <<'EOF'\nRemove the Dropbox integration\nEOF", app, undefined],
     ["rm -rf build && cat > .env <<'EOF'\nBACKUP_DIR=/Users/me/Dropbox/backups\nEOF", app, undefined],
     ["cat > README.md <<'EOF'\nExport to ~/Dropbox/exports\nEOF\nnpm run build", app, undefined],
+    ['git clean -fd -e "tmp #1" -n \\\n  -q', DIR, undefined], // a quoted ` #` is no comment
+    ['echo "a #b" && find ~/Dropbox/x \\\n  -delete', '/tmp', 'deny'],
+    ['rm -f $(ls -tr logs/*.log | head -n -5)', DIR, undefined],
+    ['rm -f \\\n  $(ls -tr logs/*.log | head -n -5)', DIR, undefined],
+    ['rm -f /tmp/app.pid \\\n  `ls -tr *.log | head -1`', DIR, undefined],
+    ["find . -name '*.orig' \\\n  -exec rm -f {} + \\\n  -print", DIR, undefined],
+    ['rm $(cat list) -r', DIR, 'deny'],
+    ['rm `ls` \\\n  -rf', DIR, 'deny'],
+    ['rm $(dirname $(pwd)) -r', DIR, 'deny'],
+    ['rm -f $((n+1)) -r', DIR, 'deny'],
+    [`echo "${'\n'.repeat(50_000)}"\nrm -rf ~/Dropbox/x`, '/tmp', 'deny'],
   ])
   expect(isRecursiveDelete('git -C ~/work clean \\\n  -fdx')).toBe(true)
   expect(isRecursiveDelete('rm \\\n  -rf x')).toBe(true)
+})
+
+test('guardPaths: escaped spaces in the setting, apostrophes, and neighbouring folders', () => {
+  expect(parsePaths('~/My\\ Projects; C:\\Users\\me\\work')).toEqual(['~/My Projects', 'C:\\Users\\me\\work'])
+  verdicts(guardOf(parsePaths('~/My\\ Projects')), [
+    ['rm -rf build', '/Users/me/My Projects/app', 'deny'],
+    ['rm -rf ~/My\\ Projects/x', '/tmp', 'deny'],
+    ['rm -rf build', '/Users/me/My Projectsx', undefined],
+  ])
+  verdicts(guardOf(["~/Tom's Files"]), [
+    ['rm -rf "$HOME/Tom\'s Files/x"', '/tmp', 'deny'],
+    ["rm -rf ~/Tom\\'s\\ Files/x", '/tmp', 'deny'],
+  ])
+  verdicts(guardOf(['~/work']), [
+    ['rm -rf build', '/Users/me/work (old)/app', undefined],
+    ['rm -rf build', '/Users/me/work, copy', undefined],
+  ])
 })
